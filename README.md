@@ -236,11 +236,21 @@ Rate/timeout precedence at runtime:
 - `--eye [url|file]` accepts either a single URL string or a file path.
 - Output goes through the incremental EyeWitness wrapper by default.
 - The default durable store is `eyewitness/`, configurable with the `tools.eyewitness.store_dir` value in `config/general.yaml`.
-- The central report and URL lookup manifest are written to `eyewitness/final/report.html` and `eyewitness/final/requests.jsonl`.
+- For large screenshot/source stores, set `tools.eyewitness.large_project_dir`
+  to a root such as `/mnt/bounty`. When `store_dir` is left at its legacy
+  default, recon-ry writes to
+  `{{LARGE_PROJECT_DIR}}/{{PROJECT_BASENAME}}/web/recon/eyewitness`.
+- `store_dir` also supports `{{LARGE_PROJECT_DIR}}`,
+  `{{PROJECT_BASENAME}}`, `{{PROJECT_DIR}}`, `{{RECON_DIR}}`, `{{DOMAIN}}`,
+  and `{{URL}}` placeholders for custom layouts.
+- The central report and URL lookup manifest are written under the resolved
+  EyeWitness store, for example
+  `/mnt/bounty/example/web/recon/eyewitness/final/report.html` and
+  `/mnt/bounty/example/web/recon/eyewitness/final/requests.jsonl`.
 
 `--full` + EyeWitness input selection:
-- If `eyewitness/` does not exist or is empty, EyeWitness uses normal run/project `alive.txt` and `params.txt` inputs.
-- If `eyewitness/` already has content, EyeWitness uses current run delta files from `history/<date>/alive.txt` and `history/<date>/params.txt`.
+- If the resolved EyeWitness store does not exist or is empty, EyeWitness uses normal run/project `alive.txt` and `params.txt` inputs.
+- If the resolved EyeWitness store already has content, EyeWitness uses current run delta files from `history/<date>/alive.txt` and `history/<date>/params.txt`.
 
 ## Incremental EyeWitness Reports
 
@@ -268,8 +278,27 @@ The wrapper:
 - writes merged metadata to `final/requests.jsonl`
 - writes the current run report to `runs/<run_id>/final/report.html`
 - regenerates the central EyeWitness-style merged report at `final/report.html`
+- supports `--report-style cached`, which builds `final/report_cache.sqlite`
+  plus `final/assets/report-index.js` and keeps interactive search,
+  include/exclude terms, checkboxes, quick filters, pagination, and saved
+  filter state without rendering one massive HTML table. The generated index
+  is still loaded and filtered client-side, so assess its size before using
+  this mode for extremely large stores.
 - optionally renders `final/report.pdf` with `--pdf` when Playwright is installed
 - deletes successful chunk work directories after merge unless `--keep-work` is used
+
+Rebuild only the report from an existing store without launching EyeWitness:
+
+```bash
+./main.sh eye_chunks \
+  --output /mnt/bounty/example/web/recon/eyewitness \
+  --report-only \
+  --report-style cached \
+  --title "Example EyeWitness Report"
+```
+
+Use `--rebuild-report-cache` when `final/requests.jsonl` was repaired in place
+and you want to force a fresh SQLite/index rebuild.
 
 The same wrapper is also used by `recon --eye`; tune these defaults under
 `tools.eyewitness` in `config/general.yaml`:

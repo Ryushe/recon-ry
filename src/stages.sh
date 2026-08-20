@@ -12,6 +12,47 @@ dir_has_contents() {
     [[ -d "$dir_path" ]] && find "$dir_path" -mindepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
+expand_eyewitness_store_template() {
+    local template="$1"
+    local project_dir="$2"
+    local domain="$3"
+    local url="$4"
+    local large_project_dir="$5"
+    local project_basename
+
+    project_basename="$(basename "$project_dir")"
+    large_project_dir="${large_project_dir/#\~/$HOME}"
+
+    template="${template//\{\{PROJECT_DIR\}\}/$project_dir}"
+    template="${template//\{\{PROJECT_BASENAME\}\}/$project_basename}"
+    template="${template//\{\{LARGE_PROJECT_DIR\}\}/$large_project_dir}"
+    template="${template//\{\{RECON_DIR\}\}/$SCRIPT_DIR}"
+    template="${template//\{\{DOMAIN\}\}/$domain}"
+    template="${template//\{\{URL\}\}/$url}"
+    template="${template/#\~/$HOME}"
+
+    printf '%s\n' "$template"
+}
+
+resolve_eyewitness_store_dir() {
+    local project_dir="$1"
+    local domain="${2:-}"
+    local url="${3:-}"
+    local store_template
+    local large_project_dir
+
+    store_template="$(get_tool_info "eyewitness" "store_dir")"
+    large_project_dir="$(get_tool_info "eyewitness" "large_project_dir")"
+
+    if [[ -n "$large_project_dir" && ( -z "$store_template" || "$store_template" == "{{PROJECT_DIR}}/eyewitness" ) ]]; then
+        store_template="{{LARGE_PROJECT_DIR}}/{{PROJECT_BASENAME}}/web/recon/eyewitness"
+    elif [[ -z "$store_template" ]]; then
+        store_template="{{PROJECT_DIR}}/eyewitness"
+    fi
+
+    expand_eyewitness_store_template "$store_template" "$project_dir" "$domain" "$url" "$large_project_dir"
+}
+
 # Ensure eyewitness stage runs last when present
 reorder_stages_eyewitness_last() {
     local stages="$1"
@@ -182,16 +223,10 @@ execute_stage() {
             if [[ -z "${EYE_DATE_STAMP:-}" ]]; then
                 EYE_DATE_STAMP="$(date +"%-m-%-d-%Y")"
             fi
-            local eye_root="$project_dir/eyewitness"
             local eye_store
-            eye_store="$(get_tool_info "$tool" "store_dir")"
-            if [[ -z "$eye_store" ]]; then
-                eye_store="$eye_root"
-            fi
-            eye_store="${eye_store//\{\{PROJECT_DIR\}\}/$project_dir}"
-            eye_store="${eye_store//\{\{RECON_DIR\}\}/$SCRIPT_DIR}"
-            eye_store="${eye_store//\{\{DOMAIN\}\}/$domain}"
-            eye_store="${eye_store//\{\{URL\}\}/$url}"
+            local eye_root
+            eye_store="$(resolve_eyewitness_store_dir "$project_dir" "$domain" "$url")"
+            eye_root="$eye_store"
             local eye_history_run_dir="$eye_root/history/$EYE_DATE_STAMP"
             local eye_had_existing_content=false
             if dir_has_contents "$eye_root"; then
