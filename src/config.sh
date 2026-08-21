@@ -405,7 +405,7 @@ get_default_timeout() {
 import sys
 import json
 data = json.load(sys.stdin)
-print(data.get('defaults', {}).get('timeout', 300))
+print(data.get('defaults', {}).get('timeout', 0))
 "
 }
 
