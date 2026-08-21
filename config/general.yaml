@@ -6,7 +6,7 @@
 
 # Default settings
 defaults:
-  timeout: 300  # Default timeout for tools in seconds
+  timeout: 0  # Default timeout for tools in seconds (0 = no timeout)
   threads: 50   # Default thread count for tools that support it
   retries: 3    # Number of retries for failed tools
   rate_limit: 150 # Default rate limit in requests per second
