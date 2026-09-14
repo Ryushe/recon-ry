@@ -119,6 +119,8 @@ Description:
     enumeration, and more.
 
 Options:
+    --scope-file <file> Explicit allowed hostnames, wildcard hosts, IPs or CIDRs
+    --out-scope-file <file> Exclusions (always override inclusions)
     --profile <name>    Profile to run (default: full)
     --full              Run full reconnaissance (all stages)
     --subs              Subdomain enumeration only
@@ -475,6 +477,14 @@ parse_args() {
                 show_command_help "$COMMAND"
                 exit 0
                 ;;
+            --scope-file)
+                export RECON_RY_SCOPE_FILE="$(realpath "$2")"
+                shift 2
+                ;;
+            --out-scope-file)
+                export RECON_RY_OUT_SCOPE_FILE="$(realpath "$2")"
+                shift 2
+                ;;
             --profile)
                 PROFILE="$2"
                 shift 2
@@ -629,8 +639,9 @@ main() {
             # Single URL mode (no project)
             if [[ -z "$PROJECT_DIR" && -n "$URL" ]]; then
                 log_info "Running in single URL mode (output to stdout)"
-                run_recon_url_only "$URL" "$PROFILE"
-                exit 0
+                local status=0
+                run_recon_url_only "$URL" "$PROFILE" || status=$?
+                exit "$status"
             fi
 
             # Project mode
@@ -673,8 +684,9 @@ main() {
             # Single URL mode (no project)
             if [[ -z "$PROJECT_DIR" && -n "$URL" ]]; then
                 log_info "Running in single URL mode (output to stdout)"
-                run_recon_url_only "$URL" "$PROFILE"
-                exit 0
+                local status=0
+                run_recon_url_only "$URL" "$PROFILE" || status=$?
+                exit "$status"
             fi
 
             # Project mode

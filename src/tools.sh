@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Tools execution module
+source "$SCRIPT_DIR/src/scope.sh"
 
 # Shared interruption flag (best-effort; may be overridden by parent shell)
 : "${INTERRUPTED:=false}"
@@ -37,7 +38,7 @@ build_auth_args() {
                 printf ' --cookie %q' "$cookie"
             done
             ;;
-        katana|httpx|ffuf|nuclei)
+        katana|exact_katana|httpx|ffuf|nuclei)
             local auth_cmd=(python3 "$SCRIPT_DIR/scripts/auth_args.py" --format shell-header-flags)
             if [[ -n "${AUTH_SEED_FILE:-}" ]]; then
                 auth_cmd+=(--seed-file "$AUTH_SEED_FILE")
@@ -149,6 +150,7 @@ apply_auth_args_to_command() {
 check_tool_exists() {
     local tool="$1"
     local dependency="${2:-false}"
+    [[ "$tool" == "exact_katana" ]] && tool=katana
 
     # Get tool type from general config
     local tool_type=$(get_tool_info "$tool" "type")
@@ -239,10 +241,21 @@ execute_tool() {
     local domain="$4"
     local url="$5"
 
+    local RECON_RY_PROJECT_DIR="$PROJECT_DIR"
+    export RECON_RY_PROJECT_DIR
     # Check if tool is enabled
     if ! is_tool_enabled "$tool"; then
         log_debug "Tool $tool is disabled, skipping"
         return 0
+    fi
+
+    # Recheck the selected input, including resumed/history and EyeWitness files.
+    input_file=$(scope_prepare_input "$tool" "$input_file") || return $?
+    if scope_enabled && [[ -z "$input_file" ]]; then
+        case "$tool" in
+            subfinder|crt_sh|assetfinder|amass|waymore|trufflehog|dork_scan) ;;
+            *) scope_check check --value "${url:-$domain}" || return 2 ;;
+        esac
     fi
 
     # Check if tool exists
@@ -389,6 +402,14 @@ execute_tool() {
         command="source \"$venv_path/bin/activate\" && $command"
     fi
 
+    # Constrain crawler requests at source as well as filtering their results.
+    if [[ "$tool" == "katana" || "$tool" == "exact_katana" ]]; then
+        local crawl_scope
+        crawl_scope=$(scope_check crawl-regex --input "$input_file") || return 2
+        printf -v crawl_scope "%q" "$crawl_scope"
+        command="$command -fs fqdn -cs $crawl_scope -dr"
+    fi
+
     local auth_args
     auth_args=$(build_auth_args "$tool")
     command=$(apply_auth_args_to_command "$command" "$auth_args")
@@ -432,6 +453,15 @@ execute_tool() {
         local exit_code=$?
     fi
 
+    # Immutable per-invocation receipts keep parallel tool outcomes distinct.
+    local status_dir="${CURRENT_HISTORY_DIR:-$PROJECT_DIR}/tool-status"
+    local status_file
+    mkdir -p "$status_dir" || return 1
+    status_file=$(mktemp "$status_dir/result.XXXXXX") || return 1
+    printf 'tool\t%s\nexit_code\t%s\npartial\t%s\nartifact\t%s\n' \
+        "$tool" "$exit_code" "$([[ $exit_code -eq 0 ]] && printf false || printf true)" \
+        "${TOOL_ARTIFACT:-$output_file}" > "$status_file" || return 1
+
     if [[ $exit_code -eq 0 ]]; then
         log_debug "Tool $tool completed successfully"
         return 0
@@ -441,7 +471,7 @@ execute_tool() {
         return 130
     elif [[ $exit_code -eq 124 ]]; then
         log_warning "Tool $tool timed out after ${effective_timeout}s"
-        return 0  # Treat timeout as non-fatal; keep whatever output was produced
+        return 124  # Caller preserves evidence; timeout is incomplete, not success
     else
         log_warning "Tool $tool failed with exit code $exit_code"
         return 1
@@ -476,6 +506,7 @@ run_tool_with_anew() {
     local url="$5"
 
     if [[ "$tool" == "eyewitness" ]]; then
+        local TOOL_ARTIFACT="$output_file"
         mkdir -p "$output_file"
         execute_tool "$tool" "$input_file" "$output_file" "$domain" "$url"
         return $?
@@ -503,6 +534,13 @@ run_tool_with_anew() {
         fi
         merged=true
 
+        if scope_enabled; then
+            case "$(basename "$output_file")" in
+                wild.txt|urls.txt|alive.txt|params_raw.txt|params.txt|jsfiles.txt)
+                    scope_check filter --input "$temp_output" --output "$temp_output" || return 2
+                    ;;
+            esac
+        fi
         if [[ -s "$temp_output" ]]; then
             local new_count=0
 
@@ -594,8 +632,20 @@ PY
     # Execute tool
     local exec_ok=true
     local exec_status=0
+    local TOOL_ARTIFACT="$output_file"
     execute_tool "$tool" "$input_file" "$temp_output" "$domain" "$url" || exec_status=$?
     if [[ $exec_status -ne 0 ]]; then
+        # A timed-out formatter (notably ffuf JSON) may be unparsable. Keep the
+        # raw bytes before any merge/parser cleanup, not just parsed records.
+        local partial_dir="$PROJECT_DIR/.partials"
+        local partial_file
+        mkdir -p "$partial_dir" || return 1
+        partial_file=$(mktemp "$partial_dir/evidence.XXXXXX") || return 1
+        cp "$temp_output" "$partial_file" || return 1
+        if [[ -f "$temp_output.log" ]]; then
+            cp "$temp_output.log" "$partial_file.log" || return 1
+        fi
+        log_warning "Tool $tool partial raw evidence retained at $partial_file"
         exec_ok=false
         if [[ $exec_status -eq 130 || "${INTERRUPTED:-false}" == "true" ]]; then
             INTERRUPTED=true
@@ -683,7 +733,7 @@ PY
     if [[ "${INTERRUPTED:-false}" == "true" ]]; then
         return 130
     fi
-    return 1
+    return "$exec_status"
 }
 
 # Run tool without anew (direct output)
@@ -713,6 +763,7 @@ run_tools_parallel() {
 
     # Wait for all tools to complete
     local failed=0
+    local timed_out=false
     for pid in "${pids[@]}"; do
         local rc=0
         wait "$pid" || rc=$?
@@ -726,17 +777,20 @@ run_tools_parallel() {
                 done
                 return 130
             fi
+            [[ $rc -eq 124 ]] && timed_out=true
             failed=$((failed + 1))
         fi
     done
 
-    return $failed
+    [[ "$timed_out" == "true" ]] && return 124
+    [[ $failed -eq 0 ]]
 }
 
 # Run tools sequentially
 run_tools_sequential() {
     local tools=("$@")
     local failed=0
+    local timed_out=false
 
     for tool in "${tools[@]}"; do
         # Parse tool with its parameters
@@ -749,11 +803,13 @@ run_tools_sequential() {
                 INTERRUPTED=true
                 return 130
             fi
+            [[ $rc -eq 124 ]] && timed_out=true
             failed=$((failed + 1))
         fi
     done
 
-    return $failed
+    [[ "$timed_out" == "true" ]] && return 124
+    [[ $failed -eq 0 ]]
 }
 
 # Check if required input files exist and are not empty

@@ -152,6 +152,7 @@ execute_stage() {
     local url="$4"
     local temp_dir="$project_dir/.tmp_run"
 
+    scope_filter_artifacts "$project_dir" || return 2
     log_info "Running stage: $stage"
 
     # Check if stage is enabled
@@ -339,27 +340,29 @@ execute_stage() {
         return 0
     fi
 
-    # Execute tools
+    local exit_code=0
+    # Capture failures explicitly even under errexit.
     if [[ "$parallel" == "true" ]]; then
         log_verbose "Running ${#tool_params[@]} tools in parallel"
-        run_tools_parallel "${tool_params[@]}"
+        run_tools_parallel "${tool_params[@]}" || exit_code=$?
     else
         log_verbose "Running ${#tool_params[@]} tools sequentially"
-        run_tools_sequential "${tool_params[@]}"
+        run_tools_sequential "${tool_params[@]}" || exit_code=$?
     fi
-
-    local exit_code=$?
 
     if [[ $exit_code -eq 130 || "${INTERRUPTED:-false}" == "true" ]]; then
         INTERRUPTED=true
         log_warning "Stage $stage interrupted"
         return 130
+    elif [[ $exit_code -eq 124 ]]; then
+        log_warning "Stage $stage incomplete: tool timeout; partial evidence retained"
     elif [[ $exit_code -gt 0 ]]; then
-        log_warning "Stage $stage completed with $exit_code failed tools"
+        log_warning "Stage $stage incomplete: one or more tools failed"
     else
         log_success "Stage $stage completed successfully"
     fi
 
+    scope_filter_artifacts "$project_dir" || return 2
     return $exit_code
 }
 
@@ -368,6 +371,17 @@ run_recon_project() {
     local project_dir="$1"
     local url="$2"
     local profile="$3"
+
+    local RECON_RY_EXACT_HOST="${RECON_RY_EXACT_HOST:-}"
+    if [[ "$profile" == "exact-host" || "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
+        [[ -n "$url" ]] || { log_error "Exact profile requires --url"; return 2; }
+        RECON_RY_EXACT_HOST="$url"
+    fi
+    export RECON_RY_EXACT_HOST
+    if scope_enabled; then
+        scope_check validate || return 2
+        scope_filter_artifacts "$project_dir" || return 2
+    fi
 
     log_info "Starting recon with profile: $profile"
     log_info "Project directory: $project_dir"
@@ -423,17 +437,14 @@ run_recon_project() {
     if [[ -n "$url" ]]; then
         printf '%s\n' "$url" > "$temp_dir/url_seed.txt"
     fi
-    if [[ "$profile" == "exact-urls" ]]; then
+    if [[ "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
         # Reuse URL-discovery tools with a transient single-host input. This is
         # not a wildcard inventory and is never promoted into project wild.txt.
         printf '%s\n' "$domain" > "$temp_dir/wild.txt"
     fi
 
     if [[ "$DIR_ONLY" == "true" ]]; then
-        log_info "Directory fuzzing only (--dir)"
-        execute_stage "dir_enum" "$project_dir" "$domain" "$url"
-        copy_outputs_to_history "$project_dir" "$history_dir"
-        return $?
+        stages="dir_enum"
     fi
 
     local dir_enum_in_profile=false
@@ -470,8 +481,17 @@ run_recon_project() {
     log_info "History directory: $history_dir"
     init_history_baseline "$project_dir" "$history_dir"
 
+    if [[ "$DIR_ONLY" == "true" ]]; then
+        local dir_status=0
+        execute_stage dir_enum "$project_dir" "$domain" "$url" || dir_status=$?
+        copy_outputs_to_history "$project_dir" "$history_dir"
+        return "$dir_status"
+    fi
+
     # Execute each stage
     local failed_stages=0
+    local project_status=0
+    local bg_pid=""
     for stage in $stages; do
         if [[ "${INTERRUPTED:-false}" == "true" ]]; then
             log_warning "Interrupt requested; stopping remaining stages"
@@ -486,16 +506,20 @@ run_recon_project() {
             # Run directory fuzzing in background after alive_check
             continue
         fi
-        if ! execute_stage "$stage" "$project_dir" "$domain" "$url"; then
+        local stage_status=0
+        execute_stage "$stage" "$project_dir" "$domain" "$url" || stage_status=$?
+        if [[ $stage_status -ne 0 ]]; then
             if [[ "${INTERRUPTED:-false}" == "true" ]]; then
                 log_warning "Recon interrupted by user"
                 return 130
             fi
             failed_stages=$((failed_stages + 1))
+            [[ $project_status -eq 0 ]] && project_status=1
+            [[ $stage_status -eq 124 ]] && project_status=124
             log_error "Stage $stage failed"
         fi
 
-        if [[ "$profile" == "exact-urls" ]]; then
+        if [[ "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
             filter_exact_host_artifacts "$project_dir" "$url"
         fi
 
@@ -505,8 +529,8 @@ run_recon_project() {
                 local bg_dir="$project_dir/.bg_scans"
                 mkdir -p "$bg_dir"
                 local log_file="$history_dir/dir_enum.log"
-                bash "$SCRIPT_DIR/scripts/bg_dir_enum.sh" "$project_dir" "$url" "$history_dir" "$VERBOSE" > "$log_file" 2>&1 &
-                local bg_pid=$!
+                TOOL_TIMEOUT="${TOOL_TIMEOUT:-}" bash "$SCRIPT_DIR/scripts/bg_dir_enum.sh" "$project_dir" "$url" "$history_dir" "$VERBOSE" > "$log_file" 2>&1 &
+                bg_pid=$!
                 if [[ -n "$bg_pid" ]]; then
                     echo "$bg_pid" > "$bg_dir/dir_enum.pid"
                     log_info "Dir enum running (pid $bg_pid), log: $log_file"
@@ -524,6 +548,17 @@ run_recon_project() {
         copy_outputs_to_history "$project_dir" "$history_dir"
     done
 
+    # Background work must finish before the project can claim success.
+    if [[ -n "$bg_pid" ]]; then
+        local bg_status=0
+        wait "$bg_pid" || bg_status=$?
+        if [[ $bg_status -ne 0 ]]; then
+            failed_stages=$((failed_stages + 1))
+            [[ $project_status -eq 0 ]] && project_status=1
+            [[ $bg_status -eq 124 ]] && project_status=124
+        fi
+    fi
+
     # Final summary
     echo ""
     log_info "Recon completed!"
@@ -538,6 +573,7 @@ run_recon_project() {
 
     # Show summary of results
     show_results_summary "$project_dir"
+    return "$project_status"
 }
 
 # Run recon for single URL (stdout only)
@@ -554,6 +590,13 @@ run_recon_url_only() {
 
     # Create temp directory
     local temp_dir=$(mktemp -d)
+    local PROJECT_DIR="$temp_dir"
+    local RECON_RY_EXACT_HOST="${RECON_RY_EXACT_HOST:-}"
+    if [[ "$profile" == "exact-host" || "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
+        RECON_RY_EXACT_HOST="$url"
+    fi
+    export RECON_RY_EXACT_HOST
+    mkdir -p "$temp_dir/.tmp_run"
     trap "rm -rf $temp_dir" EXIT
 
     # Get stages for profile
@@ -564,9 +607,14 @@ run_recon_url_only() {
         printf '%s\n' "$url" > "$temp_dir/url_seed.txt"
     fi
 
-    # Execute stages
+    # Execute stages without losing failure/timeout status to result printing.
+    local result=0 stage_status=0
     for stage in $stages; do
-        execute_stage "$stage" "$temp_dir" "$domain" "$url"
+        stage_status=0
+        execute_stage "$stage" "$temp_dir" "$domain" "$url" || stage_status=$?
+        [[ $result -eq 0 && $stage_status -ne 0 ]] && result=$stage_status
+        [[ $stage_status -eq 124 ]] && result=124
+        [[ $stage_status -eq 130 ]] && return 130
     done
 
     # Output results to stdout
@@ -579,6 +627,7 @@ run_recon_url_only() {
             cat "$temp_dir/$file"
         fi
     done
+    return "$result"
 }
 
 # Show results summary

@@ -17,6 +17,18 @@ profiles:
       - url_ranking
       - eyewitness
 
+  snap:
+    description: "Reduced preset: no port enrichment, directory brute force, or screenshots; not an authorization policy"
+    stages:
+      - subdomain_enum
+      - url_discovery
+      - alive_check
+      - get_ips
+      - http_fingerprinting
+      - param_discovery
+      - secret_scan
+      - url_ranking
+
   exact-urls:
     description: "Full web reconnaissance limited to one exact URL host"
     stages:
@@ -28,6 +40,17 @@ profiles:
       - secret_scan
       - url_ranking
       - eyewitness
+
+  exact-urls-header:
+    description: "Exact-host web recon with header-capable top-level tools"
+    stages:
+      - exact_url_discovery_header
+      - exact_alive_check
+      - exact_http_fingerprinting
+      - exact_param_discovery
+      - dir_enum
+      - exact_secret_scan_header
+      - exact_url_ranking
 
   subs:
     description: "Subdomain enumeration only"
@@ -60,18 +83,6 @@ profiles:
     stages:
       - url_discovery
       - alive_check
-
-  exact-urls:
-    description: "Exact-host web reconnaissance without sibling-host or IP/port expansion"
-    stages:
-      - url_discovery
-      - alive_check
-      - http_fingerprinting
-      - param_discovery
-      - dir_enum
-      - secret_scan
-      - url_ranking
-      - eyewitness
 
   passive:
     description: "Passive archive URL and parameter discovery"

@@ -15,6 +15,12 @@ A modular Bash reconnaissance framework for bug bounty and web attack-surface ma
 - Dry-run mode and configurable verbosity (`-v`, `-vv`)
 - Built-in offline self-test (`selftest`)
 
+## Defensive scope and incomplete runs
+
+See [defensive maintenance boundaries](docs/defensive-maintenance.md) for explicit
+scope files, exact-host behavior, IP authorization limits, timeout receipts,
+offline tests and the remaining request-level containment release gate.
+
 ## Installation
 
 ### Prerequisites

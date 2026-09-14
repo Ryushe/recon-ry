@@ -29,5 +29,8 @@ if [[ -n "$URL" ]]; then
     domain=$(echo "$URL" | sed -e 's|^https\?://||' -e 's|/.*||')
 fi
 
-execute_stage "dir_enum" "$PROJECT_DIR" "$domain" "$URL"
+CURRENT_HISTORY_DIR="$HISTORY_DIR"
+status=0
+execute_stage "dir_enum" "$PROJECT_DIR" "$domain" "$URL" || status=$?
 copy_outputs_to_history "$PROJECT_DIR" "$HISTORY_DIR"
+exit "$status"
