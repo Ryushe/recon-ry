@@ -460,10 +460,34 @@ def merge_chunk(chunk: Chunk, store_dir: Path, run_dir: Path, run_id: str, eyewi
     return len(new_records)
 
 
+def scoped_chunk_input(input_path: Path, destination: Path) -> Path:
+    """Recheck persisted chunk inputs before dispatch without altering evidence."""
+    if not (os.environ.get("RECON_RY_SCOPE_FILE") or os.environ.get("RECON_RY_EXACT_HOST")):
+        return input_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("scope_filter.py")),
+         "filter", "--input", str(input_path), "--output", str(destination)],
+        check=True,
+    )
+    if not destination.stat().st_size:
+        raise ValueError("no authorized URLs remain in saved chunk")
+    return destination
+
+
 def run_chunk(chunk: Chunk, args: argparse.Namespace, store_dir: Path, run_dir: Path, state_path: Path, state: RunState) -> bool:
     configured_work_dir = Path(chunk.work_dir)
     work_root = Path(args.db_root).expanduser() / store_key(store_dir) / state.run_id / chunk.id
     work_dir = work_root / "work"
+    try:
+        dispatch_input = scoped_chunk_input(Path(chunk.input), work_root / "scoped-input.txt")
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        chunk.status = "blocked"
+        chunk.exit_code = 2
+        chunk.error = "saved chunk input failed current scope validation"
+        chunk.finished_at = now()
+        save_state(state_path, state)
+        return False
     shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     chunk.work_dir = str(work_dir)
@@ -483,7 +507,7 @@ def run_chunk(chunk: Chunk, args: argparse.Namespace, store_dir: Path, run_dir: 
         str(args.eyewitness),
         "--web",
         "-f",
-        chunk.input,
+        str(dispatch_input),
         "--timeout",
         str(args.timeout),
         "--threads",
@@ -1484,6 +1508,7 @@ def build_report_cache(manifest_path: Path, db_path: Path, source_base: Path, fo
     manifest_stat = manifest_path.stat()
     expected = {
         "manifest_path": str(manifest_path.resolve()),
+        "source_base": str(source_base.resolve()),
         "manifest_size": str(manifest_stat.st_size),
         "manifest_mtime_ns": str(manifest_stat.st_mtime_ns),
         "cache_version": "2",

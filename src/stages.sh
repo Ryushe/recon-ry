@@ -371,6 +371,7 @@ run_recon_project() {
     local project_dir="$1"
     local url="$2"
     local profile="$3"
+    local CURRENT_HISTORY_DIR=""
 
     local RECON_RY_EXACT_HOST="${RECON_RY_EXACT_HOST:-}"
     if [[ "$profile" == "exact-host" || "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then

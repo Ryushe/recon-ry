@@ -233,6 +233,29 @@ check_tool_exists() {
     return 0
 }
 
+# Best-effort receipt I/O must never replace the tool's real exit status.
+record_tool_outcome() {
+    local tool="$1" code="$2" artifact="$3" outcome="${4:-}"
+    local root="${CURRENT_HISTORY_DIR:-${PROJECT_DIR:-$(dirname "$artifact")}}"
+    if [[ -z "$outcome" ]]; then
+        case "$code" in
+            0) outcome=completed ;;
+            124) outcome=timed_out ;;
+            130) outcome=interrupted ;;
+            *) outcome=failed ;;
+        esac
+    fi
+    if ! (
+        local status_file
+        mkdir -p "$root/tool-status" || exit 1
+        status_file=$(mktemp "$root/tool-status/result.XXXXXX") || exit 1
+        printf 'tool\t%s\nexit_code\t%s\noutcome\t%s\npartial\t%s\nartifact\t%s\n' \
+            "$tool" "$code" "$outcome" "$([[ $code -eq 0 ]] && printf false || printf true)" "$artifact" > "$status_file"
+    ); then
+        log_warning "Tool $tool outcome=$outcome exit=$code; unable to persist receipt"
+    fi
+}
+
 # Execute a tool
 execute_tool() {
     local tool="$1"
@@ -241,16 +264,23 @@ execute_tool() {
     local domain="$4"
     local url="$5"
 
+    local PROJECT_DIR="${PROJECT_DIR:-$(dirname "$output_file")}"
     local RECON_RY_PROJECT_DIR="$PROJECT_DIR"
     export RECON_RY_PROJECT_DIR
     # Check if tool is enabled
     if ! is_tool_enabled "$tool"; then
         log_debug "Tool $tool is disabled, skipping"
+        record_tool_outcome "$tool" 0 "${TOOL_ARTIFACT:-$output_file}" skipped
         return 0
     fi
 
     # Recheck the selected input, including resumed/history and EyeWitness files.
-    input_file=$(scope_prepare_input "$tool" "$input_file") || return $?
+    local gate_status=0
+    input_file=$(scope_prepare_input "$tool" "$input_file") || gate_status=$?
+    if [[ $gate_status -ne 0 ]]; then
+        record_tool_outcome "$tool" "$gate_status" "${TOOL_ARTIFACT:-$output_file}" scope_blocked
+        return "$gate_status"
+    fi
     if scope_enabled && [[ -z "$input_file" ]]; then
         case "$tool" in
             subfinder|crt_sh|assetfinder|amass|waymore|trufflehog|dork_scan) ;;
@@ -261,6 +291,7 @@ execute_tool() {
     # Check if tool exists
     if ! check_tool_exists "$tool"; then
         log_warning "Tool $tool not found, skipping"
+        record_tool_outcome "$tool" 1 "${TOOL_ARTIFACT:-$output_file}" missing
         return 1
     fi
 
@@ -436,31 +467,31 @@ execute_tool() {
         effective_timeout=0
     fi
 
-    # Execute command, wrapped with timeout when applicable
+    # Capture status explicitly, including direct and background/errexit callers.
+    local exit_code=0
     if [[ $VERBOSE -ge 2 ]]; then
         if [[ $effective_timeout -gt 0 ]]; then
-            timeout "$effective_timeout" bash -c "$command" 2>&1 | tee -a "$output_file.log" | log_tool_output
+            if timeout "$effective_timeout" bash -c "$command" 2>&1 | tee -a "$output_file.log" | log_tool_output; then
+                exit_code=${PIPESTATUS[0]}
+            else
+                exit_code=${PIPESTATUS[0]}
+            fi
         else
-            eval "$command" 2>&1 | tee -a "$output_file.log" | log_tool_output
+            if eval "$command" 2>&1 | tee -a "$output_file.log" | log_tool_output; then
+                exit_code=${PIPESTATUS[0]}
+            else
+                exit_code=${PIPESTATUS[0]}
+            fi
         fi
-        local exit_code=${PIPESTATUS[0]}
     else
         if [[ $effective_timeout -gt 0 ]]; then
-            timeout "$effective_timeout" bash -c "$command" > /dev/null 2>&1
+            timeout "$effective_timeout" bash -c "$command" > /dev/null 2>&1 || exit_code=$?
         else
-            eval "$command" > /dev/null 2>&1
+            eval "$command" > /dev/null 2>&1 || exit_code=$?
         fi
-        local exit_code=$?
     fi
 
-    # Immutable per-invocation receipts keep parallel tool outcomes distinct.
-    local status_dir="${CURRENT_HISTORY_DIR:-$PROJECT_DIR}/tool-status"
-    local status_file
-    mkdir -p "$status_dir" || return 1
-    status_file=$(mktemp "$status_dir/result.XXXXXX") || return 1
-    printf 'tool\t%s\nexit_code\t%s\npartial\t%s\nartifact\t%s\n' \
-        "$tool" "$exit_code" "$([[ $exit_code -eq 0 ]] && printf false || printf true)" \
-        "${TOOL_ARTIFACT:-$output_file}" > "$status_file" || return 1
+    record_tool_outcome "$tool" "$exit_code" "${TOOL_ARTIFACT:-$output_file}"
 
     if [[ $exit_code -eq 0 ]]; then
         log_debug "Tool $tool completed successfully"
@@ -504,6 +535,7 @@ run_tool_with_anew() {
     local output_file="$3"
     local domain="$4"
     local url="$5"
+    local PROJECT_DIR="${PROJECT_DIR:-$(dirname "$output_file")}"
 
     if [[ "$tool" == "eyewitness" ]]; then
         local TOOL_ARTIFACT="$output_file"
@@ -639,13 +671,18 @@ PY
         # raw bytes before any merge/parser cleanup, not just parsed records.
         local partial_dir="$PROJECT_DIR/.partials"
         local partial_file
-        mkdir -p "$partial_dir" || return 1
-        partial_file=$(mktemp "$partial_dir/evidence.XXXXXX") || return 1
-        cp "$temp_output" "$partial_file" || return 1
-        if [[ -f "$temp_output.log" ]]; then
-            cp "$temp_output.log" "$partial_file.log" || return 1
+        if mkdir -p "$partial_dir" && partial_file=$(mktemp "$partial_dir/evidence.XXXXXX"); then
+            if [[ ! -f "$temp_output" ]] || cp "$temp_output" "$partial_file"; then
+                log_warning "Tool $tool partial raw evidence retained at $partial_file (possibly empty)"
+            else
+                log_warning "Tool $tool exit=$exec_status; raw evidence copy failed"
+            fi
+            if [[ -f "$temp_output.log" ]]; then
+                cp "$temp_output.log" "$partial_file.log" || log_warning "Tool $tool log copy failed"
+            fi
+        else
+            log_warning "Tool $tool exit=$exec_status; cannot create partial evidence archive"
         fi
-        log_warning "Tool $tool partial raw evidence retained at $partial_file"
         exec_ok=false
         if [[ $exec_status -eq 130 || "${INTERRUPTED:-false}" == "true" ]]; then
             INTERRUPTED=true

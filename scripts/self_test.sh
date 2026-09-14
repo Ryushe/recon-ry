@@ -213,7 +213,7 @@ else
     echo "PASS: param_recon receives forwarded auth controls"
 fi
 
-for header_tool in katana httpx ffuf nuclei; do
+for header_tool in katana exact_katana httpx ffuf nuclei; do
     tool_header_args="$(build_auth_args "$header_tool")"
     if [[ "$tool_header_args" != *"Authorization:"* || "$tool_header_args" != *"X-CSRF-Token:"* || "$tool_header_args" != *"Cookie:"* ]]; then
         echo "FAIL: $header_tool did not receive all authentication and custom headers"

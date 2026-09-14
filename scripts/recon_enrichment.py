@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ipaddress
 import re
 import shutil
 import socket
@@ -42,6 +43,10 @@ def extract_host(value: str) -> str:
     candidate = value.strip()
     if not candidate:
         return ""
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        pass
     if "://" not in candidate:
         candidate = f"//{candidate}"
     parsed = urlparse(candidate)
@@ -418,6 +423,11 @@ def load_hosts_from_host_port(rows: list[str]) -> set[str]:
         parsed = parse_host_port_row(row)
         if parsed:
             hosts.add(parsed[0])
+        elif row.split() and ":" not in row.split()[0]:
+            # Preserve legacy bare-host sidecar rows.
+            host = extract_host(row.split()[0])
+            if host:
+                hosts.add(host)
     return hosts
 
 

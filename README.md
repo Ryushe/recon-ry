@@ -17,6 +17,12 @@ A modular Bash reconnaissance framework for bug bounty and web attack-surface ma
 
 ## Defensive scope and incomplete runs
 
+**Compatibility change:** active tools require an explicit `--scope-file`, except
+exact profiles which may use the exact `--url` hostname. Domain scope does not
+automatically authorize scanning its resolved IPs. Missing/invalid scope files
+fail closed; the current PR does not claim complete browser/subrequest egress
+containment and is not approved for deployment.
+
 See [defensive maintenance boundaries](docs/defensive-maintenance.md) for explicit
 scope files, exact-host behavior, IP authorization limits, timeout receipts,
 offline tests and the remaining request-level containment release gate.

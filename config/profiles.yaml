@@ -42,7 +42,7 @@ profiles:
       - eyewitness
 
   exact-urls-header:
-    description: "Exact-host web reconnaissance using only target-request tools with header forwarding"
+    description: "Exact-host web recon with header-capable top-level tools"
     stages:
       - exact_url_discovery_header
       - exact_alive_check

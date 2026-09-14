@@ -478,11 +478,21 @@ parse_args() {
                 exit 0
                 ;;
             --scope-file)
-                export RECON_RY_SCOPE_FILE="$(realpath "$2")"
+                if [[ $# -lt 2 || ! -f "$2" || ! -r "$2" ]]; then
+                    log_error "--scope-file requires a readable existing file"
+                    return 2
+                fi
+                RECON_RY_SCOPE_FILE=$(realpath -e -- "$2") || return 2
+                export RECON_RY_SCOPE_FILE
                 shift 2
                 ;;
             --out-scope-file)
-                export RECON_RY_OUT_SCOPE_FILE="$(realpath "$2")"
+                if [[ $# -lt 2 || ! -f "$2" || ! -r "$2" ]]; then
+                    log_error "--out-scope-file requires a readable existing file"
+                    return 2
+                fi
+                RECON_RY_OUT_SCOPE_FILE=$(realpath -e -- "$2") || return 2
+                export RECON_RY_OUT_SCOPE_FILE
                 shift 2
                 ;;
             --profile)
