@@ -214,7 +214,8 @@ claude-recon/
 - **main.sh**: Argument parsing, module loading, command dispatch
 - **logger.sh**: All output and logging functions
 - **config.sh**: YAML parsing, config loading, config updates
-- **tools.sh**: Tool execution, parallel/sequential running
+- **tools.sh**: Tool execution, parallel/sequential running; sources `scope.sh` for all entrypoints
+- **scope.sh**: Offline scope-input and artifact gates; Python matcher in `scripts/scope_filter.py`
 - **stages.sh**: Stage dependency checking, stage execution
 - **output.sh**: File operations, anew integration, history
 - **updater.sh**: Tool installation, updates, dependency checks

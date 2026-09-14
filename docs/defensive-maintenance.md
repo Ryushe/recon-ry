@@ -94,14 +94,17 @@ silently shadow the dedicated exact stages.
   parallel/verbose timeouts, failed evidence I/O, resumed chunks and cache/host parsing.
 - `scripts/self_test.sh`: existing history, auth and EyeWitness report regressions.
 
+The framework test suite requires its existing PyYAML dependency (`setup.sh`).
+The scope matcher itself uses only the Python standard library.
+
 Run from the candidate worktree:
 
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 bash scripts/self_test.sh
-bash -n main.sh src/*.sh scripts/*.sh
+for file in main.sh src/*.sh scripts/*.sh; do bash -n "$file" || exit; done
 python3 -m py_compile scripts/*.py
-git diff --check
+git diff --check origin/main...HEAD
 ```
 
 Do not substitute a live recon run for these offline maintenance checks.
