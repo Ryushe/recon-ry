@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -60,8 +61,32 @@ CATEGORIES: list[tuple[str | None, str, str]] = [
 ]
 
 MAX_ARTIFACT_FILENAME_BYTES = 240
-INTERESTING_PRESET_FILTERS = ("errors", "no-image", "api", "json", "javascript", "unauth")
+INTERESTING_PRESET_FILTERS = ("app-error", "capture-error", "api", "json", "javascript", "unauth")
 FLOURISH_DESIGN_PATH_RE = re.compile(r"^/†\d+/?$")
+APP_ERROR_BODY_PATTERNS = (
+    "sql syntax",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "sqlite",
+    "ora-",
+    "odbc",
+    "jdbc",
+    "syntax error",
+    "database error",
+    "stack trace",
+    "traceback",
+    "uncaught exception",
+    "fatal error",
+    "template error",
+    "jinja",
+    "twig",
+    "liquid error",
+    "undefined index",
+    "undefined variable",
+    "typeerror",
+    "referenceerror",
+)
 
 
 @dataclass
@@ -435,10 +460,34 @@ def merge_chunk(chunk: Chunk, store_dir: Path, run_dir: Path, run_id: str, eyewi
     return len(new_records)
 
 
+def scoped_chunk_input(input_path: Path, destination: Path) -> Path:
+    """Recheck persisted chunk inputs before dispatch without altering evidence."""
+    if not (os.environ.get("RECON_RY_SCOPE_FILE") or os.environ.get("RECON_RY_EXACT_HOST")):
+        return input_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("scope_filter.py")),
+         "filter", "--input", str(input_path), "--output", str(destination)],
+        check=True,
+    )
+    if not destination.stat().st_size:
+        raise ValueError("no authorized URLs remain in saved chunk")
+    return destination
+
+
 def run_chunk(chunk: Chunk, args: argparse.Namespace, store_dir: Path, run_dir: Path, state_path: Path, state: RunState) -> bool:
     configured_work_dir = Path(chunk.work_dir)
     work_root = Path(args.db_root).expanduser() / store_key(store_dir) / state.run_id / chunk.id
     work_dir = work_root / "work"
+    try:
+        dispatch_input = scoped_chunk_input(Path(chunk.input), work_root / "scoped-input.txt")
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        chunk.status = "blocked"
+        chunk.exit_code = 2
+        chunk.error = "saved chunk input failed current scope validation"
+        chunk.finished_at = now()
+        save_state(state_path, state)
+        return False
     shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     chunk.work_dir = str(work_dir)
@@ -458,7 +507,7 @@ def run_chunk(chunk: Chunk, args: argparse.Namespace, store_dir: Path, run_dir: 
         str(args.eyewitness),
         "--web",
         "-f",
-        chunk.input,
+        str(dispatch_input),
         "--timeout",
         str(args.timeout),
         "--threads",
@@ -610,10 +659,42 @@ def normalized_source_body(record: dict[str, Any], source_base: Path | None) -> 
 
 def record_body_key(record: dict[str, Any], source_base: Path | None) -> str:
     body = normalized_source_body(record, source_base)
+    return record_body_key_from_body(record, body)
+
+
+def record_body_key_from_body(record: dict[str, Any], body: str) -> str:
     if not body:
         return record_response_key(record)
     digest = hashlib.sha1(body.encode("utf-8")).hexdigest()[:16]
     return f"body_{digest}"
+
+
+def record_app_error_labels(record: dict[str, Any], body: str = "") -> list[str]:
+    labels: list[str] = []
+    category = str(record.get("category") or "").lower()
+    status = record_status_bucket(record)
+    title = str(record.get("title") or "").lower()
+    capture_error = str(record.get("error") or "").lower()
+    haystack = " ".join([title, body]).lower()
+
+    if category == "unauth" or status == "401-403":
+        labels.extend(("app-error", "http-error", "auth-error", "401", "403"))
+    elif category in {"badreq", "inerror", "badgw", "serviceunavailable"} or status in {"400", "500", "502", "503"}:
+        labels.extend(("app-error", "http-error"))
+        labels.append(f"http-{status}")
+    if any(pattern in haystack for pattern in APP_ERROR_BODY_PATTERNS):
+        labels.append("app-error")
+        if any(pattern in haystack for pattern in ("sql", "mysql", "postgres", "postgresql", "sqlite", "ora-", "odbc", "jdbc", "database error")):
+            labels.append("sql-error")
+        if any(pattern in haystack for pattern in ("template error", "jinja", "twig", "liquid error")):
+            labels.append("template-error")
+        if any(pattern in haystack for pattern in ("stack trace", "traceback", "uncaught exception", "fatal error", "typeerror", "referenceerror")):
+            labels.append("stacktrace-error")
+        if "syntax error" in haystack:
+            labels.append("parser-error")
+    if capture_error:
+        labels.append("capture-error")
+    return labels
 
 
 def generalized_url_regex_token(record: dict[str, Any]) -> str:
@@ -743,7 +824,7 @@ def record_labels(record: dict[str, Any]) -> list[str]:
     if record.get("error"):
         labels.append("error")
         if record.get("category") != "notfound":
-            labels.append("errors")
+            labels.append("capture-error")
     if "api" in (record.get("url") or "").lower():
         labels.append("api")
     if "†" in (record.get("url") or ""):
@@ -752,7 +833,7 @@ def record_labels(record: dict[str, Any]) -> list[str]:
         labels.append("design-url")
     labels.append("response")
     labels.append(f"response-{record_response_key(record)}")
-    interesting_labels = {"unauth", "errors", "no-image", "api", "json", "javascript"}
+    interesting_labels = {"unauth", "app-error", "capture-error", "api", "json", "javascript"}
     if any(label in labels for label in interesting_labels):
         labels.append("interesting")
     return sorted(set(label for label in labels if label))
@@ -902,7 +983,7 @@ def render_report(
     no_image_count = sum(1 for record in records if not record.get("screenshot"))
     filter_buttons = [
         ("no-image", "No Image", no_image_count),
-        ("errors", "Errors", sum(1 for record in records if "errors" in record_labels(record))),
+        ("capture-error", "Capture Errors", sum(1 for record in records if "capture-error" in record_labels(record))),
         ("javascript", "JavaScript", type_counts.get("javascript", 0)),
         ("json", "JSON", type_counts.get("json", 0)),
         ("css", "CSS", type_counts.get("css", 0)),
@@ -1022,7 +1103,7 @@ def render_report(
         <button type="button" data-exclude="tag:design-url">Hide Designs</button>
         <button type="button" data-include="no-image">No Image</button>
         <button type="button" data-exclude="no-image">Hide No Image</button>
-        <button type="button" data-include="errors">Errors</button>
+        <button type="button" data-include="capture-error">Capture Errors</button>
         <button type="button" data-exclude="404">Hide 404</button>
       </div>
       <div class="help">Press Enter to add a term. Regex works as <b>reg:pattern</b> or <b>field:reg:pattern</b>.</div>
@@ -1134,8 +1215,8 @@ def render_report(
 
     function normalizeTerm(term) {{
       if (term === 'dagger') return '†';
-      if (term === 'error') return 'errors';
-      if (term === 'non-404-error') return 'errors';
+      if (term === 'error') return 'app-error';
+      if (term === 'non-404-error') return 'capture-error';
       return term;
     }}
 
@@ -1375,6 +1456,728 @@ def render_report(
     return report_path
 
 
+def safe_json_loads(line: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def record_host(record: dict[str, Any]) -> str:
+    return urlparse(record.get("url") or "").hostname or ""
+
+
+def record_path(record: dict[str, Any]) -> str:
+    return unquote(urlparse(record.get("url") or "").path or "")
+
+
+def compact_report_record(record_id: int, record: dict[str, Any], source_base: Path) -> dict[str, Any]:
+    body = normalized_source_body(record, source_base)
+    labels = sorted(set(record_labels(record) + record_app_error_labels(record, body)))
+    parsed = urlparse(record.get("url") or "")
+    return {
+        "id": record_id,
+        "url": record.get("url") or "",
+        "title": record.get("title") or "",
+        "host": parsed.hostname or "",
+        "path": unquote(parsed.path or ""),
+        "labels": labels,
+        "type": record_type(record),
+        "status": record_status_bucket(record),
+        "response": record_response_key(record),
+        "responseBody": record_body_key_from_body(record, body),
+        "urlResponse": record_url_response_key(record),
+        "contentType": record_content_type(record),
+        "contentLength": record_content_length(record),
+        "hasImage": bool(record.get("screenshot")),
+        "screenshot": record.get("screenshot") or "",
+        "source": record.get("source") or "",
+        "run": record.get("run_id") or "",
+        "chunk": record.get("chunk") or "",
+    }
+
+
+def report_cache_metadata(conn: sqlite3.Connection) -> dict[str, str]:
+    conn.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    return {str(key): str(value) for key, value in conn.execute("SELECT key, value FROM metadata")}
+
+
+def build_report_cache(manifest_path: Path, db_path: Path, source_base: Path, force: bool = False) -> dict[str, Any]:
+    """Build or reuse a SQLite cache for large EyeWitness report rendering."""
+    manifest_stat = manifest_path.stat()
+    expected = {
+        "manifest_path": str(manifest_path.resolve()),
+        "source_base": str(source_base.resolve()),
+        "manifest_size": str(manifest_stat.st_size),
+        "manifest_mtime_ns": str(manifest_stat.st_mtime_ns),
+        "cache_version": "2",
+    }
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        meta = report_cache_metadata(conn)
+        cached = (not force) and all(meta.get(key) == value for key, value in expected.items())
+        if cached:
+            row_count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+            skipped = int(meta.get("skipped_invalid", "0"))
+            return {"records": row_count, "skipped_invalid": skipped, "cached": True}
+
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS records;
+            DROP TABLE IF EXISTS facets;
+            CREATE TABLE records (
+                id INTEGER PRIMARY KEY,
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                host TEXT NOT NULL,
+                path TEXT NOT NULL,
+                labels TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                response TEXT NOT NULL,
+                response_body TEXT NOT NULL,
+                url_response TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                content_length TEXT NOT NULL,
+                has_image INTEGER NOT NULL,
+                screenshot TEXT NOT NULL,
+                source TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                chunk TEXT NOT NULL,
+                search TEXT NOT NULL
+            );
+            CREATE TABLE facets (
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL,
+                count INTEGER NOT NULL,
+                PRIMARY KEY (kind, value)
+            );
+            CREATE INDEX records_host_idx ON records(host);
+            CREATE INDEX records_type_idx ON records(type);
+            CREATE INDEX records_status_idx ON records(status);
+            CREATE INDEX records_has_image_idx ON records(has_image);
+            """
+        )
+        conn.execute("DELETE FROM metadata")
+
+        host_counts: Counter[str] = Counter()
+        type_counts: Counter[str] = Counter()
+        label_counts: Counter[str] = Counter()
+        title_counts: Counter[str] = Counter()
+        status_counts: Counter[str] = Counter()
+        skipped_invalid = 0
+        inserted = 0
+        batch: list[tuple[Any, ...]] = []
+
+        with manifest_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                record = safe_json_loads(line)
+                if record is None:
+                    skipped_invalid += 1
+                    continue
+                inserted += 1
+                compact = compact_report_record(inserted, record, source_base)
+                labels = " ".join(compact["labels"])
+                search = " ".join(
+                    str(value)
+                    for value in (
+                        compact["url"],
+                        compact["title"],
+                        compact["host"],
+                        compact["path"],
+                        labels,
+                        compact["type"],
+                        compact["status"],
+                        compact["contentType"],
+                        compact["contentLength"],
+                    )
+                    if value
+                ).lower()
+                host_counts.update([compact["host"] or "unknown"])
+                type_counts.update([compact["type"]])
+                status_counts.update([compact["status"]])
+                label_counts.update(compact["labels"])
+                if compact["title"]:
+                    title_counts.update([compact["title"][:160]])
+                batch.append(
+                    (
+                        compact["id"],
+                        compact["url"],
+                        compact["title"],
+                        compact["host"],
+                        compact["path"],
+                        labels,
+                        compact["type"],
+                        compact["status"],
+                        compact["response"],
+                        compact["responseBody"],
+                        compact["urlResponse"],
+                        compact["contentType"],
+                        compact["contentLength"],
+                        1 if compact["hasImage"] else 0,
+                        compact["screenshot"],
+                        compact["source"],
+                        compact["run"],
+                        compact["chunk"],
+                        search,
+                    )
+                )
+                if len(batch) >= 1000:
+                    conn.executemany(
+                        "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        batch,
+                    )
+                    batch.clear()
+        if batch:
+            conn.executemany("INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+
+        facet_rows: list[tuple[str, str, int]] = []
+        for kind, counts in (
+            ("host", host_counts),
+            ("type", type_counts),
+            ("status", status_counts),
+            ("label", label_counts),
+            ("title", title_counts),
+        ):
+            facet_rows.extend((kind, value, count) for value, count in counts.items())
+        conn.executemany("INSERT INTO facets VALUES (?,?,?)", facet_rows)
+        conn.executemany("INSERT INTO metadata VALUES (?,?)", [*expected.items(), ("skipped_invalid", str(skipped_invalid))])
+        conn.commit()
+        return {"records": inserted, "skipped_invalid": skipped_invalid, "cached": False}
+    finally:
+        conn.close()
+
+
+def render_cached_report(
+    report_dir: Path,
+    manifest_path: Path,
+    title: str,
+    page_size: int,
+    asset_prefix: str = "",
+    force_cache: bool = False,
+) -> Path:
+    """Render a report backed by SQLite and a client-side record index."""
+    report_dir.mkdir(parents=True, exist_ok=True)
+    asset_dir = report_dir / "assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    source_base = (report_dir / asset_prefix).resolve()
+    db_path = report_dir / "report_cache.sqlite"
+    cache_info = build_report_cache(manifest_path, db_path, source_base, force=force_cache)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        records = []
+        for row in conn.execute(
+            """
+            SELECT id, url, title, host, path, labels, type, status, response,
+                   response_body, url_response, content_type, content_length,
+                   has_image, screenshot, source, run_id, chunk, search
+            FROM records
+            ORDER BY id
+            """
+        ):
+            records.append(
+                {
+                    "id": row["id"],
+                    "url": row["url"],
+                    "title": row["title"],
+                    "host": row["host"],
+                    "path": row["path"],
+                    "labels": row["labels"].split(),
+                    "type": row["type"],
+                    "status": row["status"],
+                    "response": row["response"],
+                    "responseBody": row["response_body"],
+                    "urlResponse": row["url_response"],
+                    "contentType": row["content_type"],
+                    "contentLength": row["content_length"],
+                    "hasImage": bool(row["has_image"]),
+                    "screenshot": f"{asset_prefix}{row['screenshot']}" if row["screenshot"] else "",
+                    "source": f"{asset_prefix}{row['source']}" if row["source"] else "",
+                    "run": row["run_id"],
+                    "chunk": row["chunk"],
+                    "search": row["search"],
+                }
+            )
+        facets: dict[str, list[tuple[str, int]]] = {}
+        for row in conn.execute("SELECT kind, value, count FROM facets ORDER BY count DESC, value LIMIT 2000"):
+            facets.setdefault(row["kind"], []).append((row["value"], int(row["count"])))
+    finally:
+        conn.close()
+
+    index_path = asset_dir / "report-index.js"
+    index_path.write_text(
+        "window.EYE_REPORT_INDEX = "
+        + json.dumps(records, ensure_ascii=False, separators=(",", ":"))
+        + ";\n",
+        encoding="utf-8",
+    )
+    summary_path = asset_dir / "summary.json"
+    write_json(
+        summary_path,
+        {
+            "generated_at": now(),
+            "records": len(records),
+            "skipped_invalid": cache_info["skipped_invalid"],
+            "cached": cache_info["cached"],
+            "manifest": str(manifest_path),
+            "database": str(db_path),
+            "index": str(index_path),
+            "facets": {kind: values[:50] for kind, values in facets.items()},
+        },
+    )
+
+    type_counts = dict(facets.get("type", []))
+    label_counts = dict(facets.get("label", []))
+    no_image_count = len(records) - sum(1 for record in records if record["hasImage"])
+    filter_buttons = [
+        ("no-image", "No Image", no_image_count),
+        ("app-error", "Errors", label_counts.get("app-error", 0)),
+        ("capture-error", "Capture Errors", label_counts.get("capture-error", 0)),
+        ("javascript", "JavaScript", type_counts.get("javascript", 0)),
+        ("json", "JSON", type_counts.get("json", 0)),
+        ("css", "CSS", type_counts.get("css", 0)),
+        ("svg", "SVG", type_counts.get("svg", 0)),
+        ("image", "Images", type_counts.get("image", 0)),
+        ("font", "Fonts", type_counts.get("font", 0)),
+        ("api", "API", label_counts.get("api", 0)),
+        ("unauth", "401/403", label_counts.get("unauth", 0)),
+        ("dagger-url", "Dagger URLs", label_counts.get("dagger-url", 0)),
+    ]
+    filters = "\n".join(
+        f'<label class="filter-check"><input type="checkbox" value="{html.escape(value, quote=True)}"> {html.escape(label)} <span>{count}</span></label>'
+        for value, label, count in filter_buttons
+        if count
+    )
+    top_hosts = "\n".join(
+        f"<tr><td>{html.escape(value)}</td><td>{count}</td></tr>"
+        for value, count in facets.get("host", [])[:20]
+    )
+    report = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 0; color: #222; }}
+    h1 {{ margin: 0 0 8px; }}
+    h2 {{ margin-top: 28px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 14px 0 24px; }}
+    th, td {{ border: 1px solid #999; padding: 8px; vertical-align: top; }}
+    th {{ background: #eee; }}
+    .layout {{ display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }}
+    .sidebar {{ position: sticky; top: 0; align-self: start; height: 100vh; overflow: auto; border-right: 1px solid #ccc; background: #f7f7f7; padding: 16px; box-sizing: border-box; }}
+    .content {{ padding: 24px; min-width: 0; }}
+    .summary {{ color: #555; margin-bottom: 18px; }}
+    input[type="search"], select {{ width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0 10px; }}
+    details {{ border: 1px solid #ccc; background: #fff; margin: 10px 0; }}
+    summary {{ cursor: pointer; padding: 9px 10px; font-weight: bold; }}
+    .panel-body {{ border-top: 1px solid #ddd; padding: 10px; }}
+    .filter-check {{ display: block; padding: 5px 0; cursor: pointer; line-height: 1.25; }}
+    .filter-check span, .muted {{ color: #666; font-size: 12px; }}
+    .quick-filters, .actions, .pager, .term-list, .row-actions {{ display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }}
+    button {{ border: 1px solid #aaa; background: #fff; padding: 5px 8px; border-radius: 4px; cursor: pointer; }}
+    button:hover {{ background: #eee; }}
+    .term-chip, .badge {{ display: inline-flex; align-items: center; gap: 6px; border: 1px solid #bbb; background: #f5f5f5; border-radius: 4px; padding: 3px 6px; font-size: 12px; margin: 2px 3px 2px 0; }}
+    .term-chip button {{ border: 0; background: transparent; padding: 0 2px; }}
+    .request {{ max-width: 760px; overflow-wrap: anywhere; }}
+    .shot {{ width: 320px; }}
+    .shot img {{ max-height: 220px; max-width: 300px; border: 1px solid #ddd; background: #fff; }}
+    .status {{ color: #555; margin: 8px 0; }}
+    .hidden {{ display: none; }}
+    .help {{ color: #666; font-size: 12px; line-height: 1.35; }}
+    @media (max-width: 900px) {{
+      .layout {{ grid-template-columns: 1fr; }}
+      .sidebar {{ position: relative; height: auto; border-right: 0; border-bottom: 1px solid #ccc; }}
+      .content {{ padding: 16px; }}
+    }}
+  </style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <h2>Search</h2>
+  <input id="searchBox" type="search" placeholder="Search or query: app.flourish status:401-403 url:/api/">
+  <div class="help">Supports text, <b>-exclude</b>, <b>field:value</b>, <b>reg:</b>, <b>/regex/</b>, and wildcards like <b>*token*</b>.</div>
+  <details open>
+    <summary>Include / Exclude</summary>
+    <div class="panel-body">
+      <label class="muted" for="includeBox">Include terms</label>
+      <input id="includeBox" type="search" placeholder="Term, then Enter">
+      <div id="includeTerms" class="term-list"></div>
+      <label class="muted" for="excludeBox">Exclude terms</label>
+      <input id="excludeBox" type="search" placeholder="Term, then Enter">
+      <div id="excludeTerms" class="term-list"></div>
+      <div class="quick-filters">
+        <button type="button" data-include="dagger-url">Dagger URLs</button>
+        <button type="button" data-include="no-image">No Image</button>
+        <button type="button" data-exclude="no-image">Hide No Image</button>
+        <button type="button" data-exclude="auth-error">Hide 403s</button>
+      </div>
+    </div>
+  </details>
+  <details>
+    <summary>Export</summary>
+    <div class="panel-body">
+      <div class="actions">
+        <button type="button" id="exportTxt">TXT URLs</button>
+        <button type="button" id="exportJson">JSON</button>
+        <button type="button" id="exportJsonl">JSONL</button>
+      </div>
+      <div class="help">Exports the current filtered result set for downstream ingestion.</div>
+    </div>
+  </details>
+  <details open>
+    <summary>Filters</summary>
+    <div class="panel-body">
+      <div class="actions">
+        <button type="button" id="clearFilters">Clear</button>
+        <button type="button" id="interestingOnly">Interesting</button>
+      </div>
+      {filters}
+    </div>
+  </details>
+  <h2>Page</h2>
+  <select id="pageSize">
+    <option value="25">25 per page</option>
+    <option value="50">50 per page</option>
+    <option value="{page_size}" selected>{page_size} per page</option>
+    <option value="200">200 per page</option>
+    <option value="500">500 per page</option>
+  </select>
+  <div class="pager">
+    <button type="button" id="prevPage">Prev</button>
+    <button type="button" id="nextPage">Next</button>
+  </div>
+  <div id="filterStatus" class="status"></div>
+</aside>
+<main class="content">
+  <h1>{html.escape(title)}</h1>
+  <div class="summary">
+    Generated {html.escape(now())}. Records: {len(records)}.
+    Invalid manifest lines skipped: {cache_info["skipped_invalid"]}.
+    Cache: {"reused" if cache_info["cached"] else "rebuilt"}.
+  </div>
+  <div class="pager">
+    <button type="button" id="prevPageTop">Prev</button>
+    <button type="button" id="nextPageTop">Next</button>
+  </div>
+  <div id="pageStatus" class="status"></div>
+  <div id="noResults" class="hidden">No records match the current filters.</div>
+  <table id="results"><thead><tr><th>Web Request Info</th><th>Web Screenshot</th></tr></thead><tbody></tbody></table>
+  <h2>Top Hosts</h2>
+  <table><tr><th>Host</th><th>Records</th></tr>{top_hosts}</table>
+</main>
+</div>
+<script src="assets/report-index.js"></script>
+<script>
+const records = window.EYE_REPORT_INDEX || [];
+const searchBox = document.getElementById('searchBox');
+const includeBox = document.getElementById('includeBox');
+const excludeBox = document.getElementById('excludeBox');
+const includeTermsEl = document.getElementById('includeTerms');
+const excludeTermsEl = document.getElementById('excludeTerms');
+const checks = Array.from(document.querySelectorAll('.filter-check input'));
+const statusEl = document.getElementById('filterStatus');
+const pageStatus = document.getElementById('pageStatus');
+const pageSizeEl = document.getElementById('pageSize');
+const tbody = document.querySelector('#results tbody');
+const noResults = document.getElementById('noResults');
+const includeTerms = [];
+const excludeTerms = [];
+const interestingPresetFilters = {json.dumps(INTERESTING_PRESET_FILTERS)};
+const storageKey = `recon-ry-eye-report:v5:${{location.pathname}}`;
+let currentPage = 1;
+let filtered = records;
+let filterTimer = null;
+
+function esc(value) {{
+  return String(value || '').replace(/[&<>"']/g, char => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[char]));
+}}
+function asset(path) {{ return path ? esc(path) : ''; }}
+function normalizeTerm(term) {{
+  if (term === 'dagger') return 'dagger-url';
+  if (term === 'error') return 'app-error';
+  return term;
+}}
+function rowText(record, field) {{
+  if (field === 'url') return record.url || '';
+  if (field === 'title') return record.title || '';
+  if (field === 'host') return record.host || '';
+  if (field === 'path') return record.path || '';
+  if (field === 'tag' || field === 'label') return (record.labels || []).join(' ');
+  if (field === 'type') return record.type || '';
+  if (field === 'response') return record.response || '';
+  if (field === 'response-body' || field === 'body') return record.responseBody || '';
+  if (field === 'url-response') return record.urlResponse || '';
+  if (field === 'content-type') return record.contentType || '';
+  if (field === 'length' || field === 'content-length') return record.contentLength || '';
+  if (field === 'status') return record.status || '';
+  return record.search || '';
+}}
+function buildRegex(pattern, flags='') {{
+  try {{ return new RegExp(pattern, flags); }} catch {{ return null; }}
+}}
+function parseRegex(value) {{
+  if (value.startsWith('reg:')) return buildRegex(value.slice(4));
+  const match = value.match(/^\\/(.*)\\/([a-z]*)$/);
+  return match ? buildRegex(match[1], match[2]) : null;
+}}
+function wildcardRegex(value) {{
+  const escaped = value.replace(/[.+?^${{}}()|[\\]\\\\]/g, '\\\\$&').replace(/\\*/g, '.*');
+  return new RegExp(escaped);
+}}
+function regexEscape(value) {{
+  return String(value || '').replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&');
+}}
+function urlPatternTerm(record) {{
+  try {{
+    const parsed = new URL(record.url || '');
+    const path = regexEscape(parsed.pathname || '/').replace(/\\d+/g, '\\\\d+');
+    let term = `url:reg:^${{regexEscape(parsed.protocol + '//' + parsed.host)}}${{path}}`;
+    const queryNames = Array.from(parsed.searchParams.keys());
+    if (queryNames.length) {{
+      term += `\\\\?${{queryNames.map(name => `${{regexEscape(name)}}=[^&]*`).join('&')}}`;
+    }}
+    if (parsed.hash) term += `\\\\#${{regexEscape(parsed.hash.slice(1))}}`;
+    return `${{term}}$`;
+  }} catch {{
+    return `url:${{record.url || ''}}`;
+  }}
+}}
+function sameResponseTerm(record) {{
+  const parts = [];
+  if (record.host) parts.push(`host:${{record.host}}`);
+  if (record.contentType) parts.push(`content-type:${{record.contentType}}`);
+  if (record.responseBody) parts.push(`response-body:${{record.responseBody}}`);
+  if (record.status) parts.push(`status:${{record.status}}`);
+  return parts.join(' && ');
+}}
+function exportRows(format) {{
+  const rows = filtered.map(record => ({{
+    url: record.url || '',
+    title: record.title || '',
+    host: record.host || '',
+    path: record.path || '',
+    status: record.status || '',
+    labels: record.labels || [],
+    type: record.type || '',
+    contentType: record.contentType || '',
+    contentLength: record.contentLength || '',
+    screenshot: record.screenshot || '',
+    source: record.source || '',
+    run: record.run || '',
+    chunk: record.chunk || '',
+  }}));
+  let content = '';
+  let mime = 'text/plain';
+  let ext = 'txt';
+  if (format === 'txt') {{
+    content = rows.map(row => row.url).filter(Boolean).join('\\n') + '\\n';
+  }} else if (format === 'jsonl') {{
+    content = rows.map(row => JSON.stringify(row)).join('\\n') + '\\n';
+    mime = 'application/x-ndjson';
+    ext = 'jsonl';
+  }} else {{
+    content = JSON.stringify(rows, null, 2);
+    mime = 'application/json';
+    ext = 'json';
+  }}
+  const blob = new Blob([content], {{ type: mime }});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `eyewitness-filtered-${{new Date().toISOString().replace(/[:.]/g, '-')}}.${{ext}}`;
+  document.body.appendChild(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}}
+function tokenMatcher(rawToken) {{
+  let token = normalizeTerm(String(rawToken || '').toLowerCase());
+  let field = 'search';
+  const colon = token.indexOf(':');
+  if (colon > 0) {{
+    field = token.slice(0, colon);
+    token = normalizeTerm(token.slice(colon + 1));
+  }}
+  const regex = parseRegex(token) || (token.includes('*') ? wildcardRegex(token) : null);
+  return record => {{
+    const haystack = rowText(record, field);
+    if (regex) return regex.test(haystack);
+    return haystack.includes(token);
+  }};
+}}
+function chipMatcher(rawChip) {{
+  const parts = rawChip.split('&&').map(part => part.trim()).filter(Boolean);
+  const matchers = (parts.length ? parts : [rawChip]).map(part => tokenMatcher(part));
+  return record => matchers.every(matches => matches(record));
+}}
+function parseQuery(value) {{
+  const include = [];
+  const exclude = [];
+  value.trim().toLowerCase().split(/\\s+/).filter(Boolean).forEach(raw => {{
+    if (raw.startsWith('-') && raw.length > 1) exclude.push(tokenMatcher(raw.slice(1)));
+    else include.push(tokenMatcher(raw));
+  }});
+  return {{ include, exclude }};
+}}
+function selectedFilters() {{ return checks.filter(check => check.checked).map(check => check.value); }}
+function activeFilterSummary() {{
+  const parts = [];
+  const checked = selectedFilters();
+  if (searchBox.value.trim()) parts.push(`search=${{searchBox.value.trim()}}`);
+  if (includeTerms.length) parts.push(`include=${{includeTerms.join(',')}}`);
+  if (excludeTerms.length) parts.push(`exclude=${{excludeTerms.join(',')}}`);
+  if (checked.length) parts.push(`checks=${{checked.join(',')}}`);
+  return parts.join(' | ');
+}}
+function saveState() {{
+  localStorage.setItem(storageKey, JSON.stringify({{
+    search: searchBox.value,
+    includeTerms,
+    excludeTerms,
+    checked: selectedFilters(),
+    pageSize: pageSizeEl.value,
+    currentPage,
+  }}));
+}}
+function restoreState() {{
+  try {{
+    const state = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    if (!state) return;
+    searchBox.value = state.search || '';
+    includeTerms.splice(0, includeTerms.length, ...((state.includeTerms || []).filter(Boolean)));
+    excludeTerms.splice(0, excludeTerms.length, ...((state.excludeTerms || []).filter(Boolean)));
+    const checked = new Set(state.checked || []);
+    checks.forEach(check => check.checked = checked.has(check.value));
+    if (state.pageSize) pageSizeEl.value = state.pageSize;
+    currentPage = Number(state.currentPage) || 1;
+    renderTermList('include');
+    renderTermList('exclude');
+  }} catch {{}}
+}}
+function renderTermList(kind) {{
+  const terms = kind === 'include' ? includeTerms : excludeTerms;
+  const container = kind === 'include' ? includeTermsEl : excludeTermsEl;
+  container.innerHTML = '';
+  terms.forEach((term, index) => {{
+    const chip = document.createElement('span');
+    chip.className = 'term-chip';
+    chip.innerHTML = `<span>${{esc(term)}}</span>`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'x';
+    remove.addEventListener('click', () => {{
+      terms.splice(index, 1);
+      renderTermList(kind);
+      applyFilters(true);
+    }});
+    chip.appendChild(remove);
+    container.appendChild(chip);
+  }});
+}}
+function addTerm(kind, term) {{
+  const value = normalizeTerm(term.trim().toLowerCase());
+  if (!value) return;
+  const terms = kind === 'include' ? includeTerms : excludeTerms;
+  if (!terms.includes(value)) terms.push(value);
+  renderTermList(kind);
+  applyFilters(true);
+}}
+function applyFilters(resetPage=false) {{
+  const query = parseQuery(searchBox.value);
+  const checkboxMatchers = selectedFilters().map(tokenMatcher);
+  const includeMatchers = includeTerms.map(chipMatcher);
+  const excludeMatchers = excludeTerms.map(chipMatcher);
+  filtered = records.filter(record => (
+    query.include.every(matches => matches(record)) &&
+    !query.exclude.some(matches => matches(record)) &&
+    checkboxMatchers.every(matches => matches(record)) &&
+    includeMatchers.every(matches => matches(record)) &&
+    !excludeMatchers.some(matches => matches(record))
+  ));
+  if (resetPage) currentPage = 1;
+  renderPage();
+  saveState();
+}}
+function renderPage() {{
+  const pageSize = Number(pageSizeEl.value) || {page_size};
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  currentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const page = filtered.slice(start, start + pageSize);
+  tbody.innerHTML = page.map(record => {{
+    const badges = (record.labels || []).slice(0, 12).map(label => `<span class="badge">${{esc(label)}}</span>`).join('');
+    const shot = record.screenshot ? `<a href="${{asset(record.screenshot)}}"><img loading="lazy" src="${{asset(record.screenshot)}}" alt="screenshot"></a>` : '<span class="muted">No screenshot</span>';
+    const source = record.source ? `<a href="${{asset(record.source)}}">Source Code</a>` : '';
+    const actions = `<div class="row-actions"><button type="button" data-exclude="${{esc(urlPatternTerm(record))}}">Hide URL pattern</button><button type="button" data-exclude="${{esc(sameResponseTerm(record))}}">Hide same response</button></div>`;
+    return `<tr><td><div class="request"><a href="${{esc(record.url)}}">${{esc(record.url)}}</a><br>${{badges}}<br><b>Page Title:</b> ${{esc(record.title || 'Unknown')}}<br>${{source}}${{actions}}<br><span class="muted">Run: ${{esc(record.run)}} / Chunk: ${{esc(record.chunk)}}</span></div></td><td class="shot">${{shot}}</td></tr>`;
+  }}).join('');
+  noResults.classList.toggle('hidden', filtered.length !== 0);
+  const active = activeFilterSummary();
+  statusEl.textContent = `${{filtered.length.toLocaleString()}} / ${{records.length.toLocaleString()}} records${{active ? ' | Active: ' + active : ''}}`;
+  pageStatus.textContent = `Page ${{currentPage.toLocaleString()}} / ${{totalPages.toLocaleString()}}`;
+}}
+function debouncedApply() {{
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => applyFilters(true), 120);
+}}
+searchBox.addEventListener('input', debouncedApply);
+includeBox.addEventListener('keydown', event => {{
+  if (event.key === 'Enter') {{ event.preventDefault(); addTerm('include', includeBox.value); includeBox.value = ''; }}
+}});
+excludeBox.addEventListener('keydown', event => {{
+  if (event.key === 'Enter') {{ event.preventDefault(); addTerm('exclude', excludeBox.value); excludeBox.value = ''; }}
+}});
+checks.forEach(check => check.addEventListener('change', () => applyFilters(true)));
+pageSizeEl.addEventListener('change', () => applyFilters(true));
+document.getElementById('clearFilters').addEventListener('click', () => {{
+  searchBox.value = '';
+  includeTerms.splice(0, includeTerms.length);
+  excludeTerms.splice(0, excludeTerms.length);
+  checks.forEach(check => check.checked = false);
+  renderTermList('include');
+  renderTermList('exclude');
+  applyFilters(true);
+}});
+document.getElementById('interestingOnly').addEventListener('click', () => {{
+  checks.forEach(check => check.checked = interestingPresetFilters.includes(check.value));
+  applyFilters(true);
+}});
+document.querySelectorAll('.quick-filters button').forEach(button => {{
+  button.addEventListener('click', () => {{
+    if (button.dataset.include) addTerm('include', button.dataset.include);
+    if (button.dataset.exclude) addTerm('exclude', button.dataset.exclude);
+  }});
+}});
+tbody.addEventListener('click', event => {{
+  const button = event.target.closest('button[data-exclude]');
+  if (!button) return;
+  addTerm('exclude', button.dataset.exclude || '');
+}});
+document.getElementById('exportTxt').addEventListener('click', () => exportRows('txt'));
+document.getElementById('exportJson').addEventListener('click', () => exportRows('json'));
+document.getElementById('exportJsonl').addEventListener('click', () => exportRows('jsonl'));
+function nextPage(delta) {{ currentPage += delta; renderPage(); saveState(); }}
+['prevPage','prevPageTop'].forEach(id => document.getElementById(id).addEventListener('click', () => nextPage(-1)));
+['nextPage','nextPageTop'].forEach(id => document.getElementById(id).addEventListener('click', () => nextPage(1)));
+restoreState();
+applyFilters(false);
+</script>
+</body>
+</html>
+"""
+    report_path = report_dir / "report.html"
+    report_path.write_text(report, encoding="utf-8")
+    return report_path
+
+
 def render_pdf(report_path: Path, pdf_path: Path) -> bool:
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
@@ -1399,9 +2202,33 @@ def resolve_run_id(args: argparse.Namespace, store_dir: Path) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
-    input_file = Path(args.input).expanduser().resolve()
     store_dir = Path(args.output).expanduser().resolve()
     store_dir.mkdir(parents=True, exist_ok=True)
+    if args.report_only:
+        manifest_path = store_dir / "final" / "requests.jsonl"
+        if not manifest_path.exists():
+            print(f"Manifest not found: {manifest_path}", file=sys.stderr)
+            return 2
+        if args.report_style == "cached":
+            report_path = render_cached_report(
+                store_dir / "final",
+                manifest_path,
+                args.title,
+                args.report_page_size,
+                force_cache=args.rebuild_report_cache,
+            )
+        else:
+            report_path = render_report(
+                store_dir / "final",
+                manifest_path,
+                args.title,
+                args.report_page_size,
+            )
+        print(f"Central report: {report_path}")
+        print(f"Central manifest: {manifest_path}")
+        return 0
+
+    input_file = Path(args.input).expanduser().resolve()
     run_id = resolve_run_id(args, store_dir)
     if not run_id:
         print("Could not resolve run id. Pass --run-id when using --resume.", file=sys.stderr)
@@ -1457,18 +2284,21 @@ def run(args: argparse.Namespace) -> int:
             if not args.continue_on_fail:
                 break
 
-    run_report_path = render_report(
+    report_renderer = render_cached_report if args.report_style == "cached" else render_report
+    run_report_path = report_renderer(
         run_dir / "final",
         run_dir / "final" / "requests.jsonl",
         f"{args.title} ({state.run_id})",
         args.report_page_size,
         asset_prefix="../../../final/",
+        **({"force_cache": args.rebuild_report_cache} if args.report_style == "cached" else {}),
     )
-    report_path = render_report(
+    report_path = report_renderer(
         store_dir / "final",
         store_dir / "final" / "requests.jsonl",
         args.title,
         args.report_page_size,
+        **({"force_cache": args.rebuild_report_cache} if args.report_style == "cached" else {}),
     )
     print(f"Run report: {run_report_path}")
     print(f"Central report: {report_path}")
@@ -1487,7 +2317,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run EyeWitness in recoverable chunks and generate one merged report.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--input", required=True, help="URL input file")
+    parser.add_argument("--input", help="URL input file")
     parser.add_argument("--output", required=True, help="Durable EyeWitness store/output directory")
     parser.add_argument("--run-id", help="Run id under <output>/runs/. Defaults to timestamp; --resume uses latest when omitted")
     parser.add_argument("--eyewitness", default=str(default_eyewitness()), help="Path to EyeWitness.py")
@@ -1499,6 +2329,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-retries", type=int, default=1, help="EyeWitness max retries")
     parser.add_argument("--results", type=int, default=100, help="Native EyeWitness results per page")
     parser.add_argument("--report-page-size", type=int, default=100, help="Rows per merged report table page")
+    parser.add_argument("--report-style", choices=("full", "cached"), default="full", help="Merged report renderer")
+    parser.add_argument("--report-only", action="store_true", help="Build report from existing final/requests.jsonl without running EyeWitness")
+    parser.add_argument("--rebuild-report-cache", action="store_true", help="Force rebuild of cached report SQLite/index data")
     parser.add_argument("--title", default="Incremental EyeWitness Report", help="Merged report title")
     parser.add_argument("--keep-work", action="store_true", help="Keep successful chunk work dirs after merge")
     parser.add_argument("--fresh", action="store_true", help="Recapture URLs even when they already exist in the central store manifest")
@@ -1514,6 +2347,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if not args.report_only and not args.input:
+        parser.error("--input is required unless --report-only is used")
     if args.chunk_size < 1:
         parser.error("--chunk-size must be positive")
     if args.threads < 1:

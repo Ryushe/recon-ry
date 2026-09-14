@@ -67,7 +67,8 @@ Usage: $0 [options]
   -d  <depth>   Katana crawl depth (default: 5)
   --auth-seed <file>  Owner-only JSON auth seed for supported active HTTP tools
   --auth-host <host>  Host used to select matching cookies from the auth seed
-  --auth-header <h>   Header for supported active HTTP tools; repeatable
+  --header <h>        Header for supported active HTTP tools; repeatable
+  --auth-header <h>   Deprecated alias for --header
   --cookie <value>    Cookie header value for supported active HTTP tools; repeatable
 
   --passive-only       Only run waybackurls + waymore
@@ -100,7 +101,7 @@ while [[ $# -gt 0 ]]; do
         -d) KATANA_DEPTH="$2"; shift 2 ;;
         --auth-seed) AUTH_SEED_FILE="$2"; shift 2 ;;
         --auth-host) AUTH_HOST="$2"; shift 2 ;;
-        --auth-header) AUTH_HEADERS+=("$2"); shift 2 ;;
+        --header|--auth-header) AUTH_HEADERS+=("$2"); shift 2 ;;
         --cookie) AUTH_COOKIES+=("$2"); shift 2 ;;
         --passive-only) PASSIVE_ONLY=1; shift ;;
         --active-only) ACTIVE_ONLY=1; shift ;;
@@ -137,7 +138,7 @@ build_auth_args() {
     fi
     local header
     for header in "${AUTH_HEADERS[@]}"; do
-        auth_cmd+=(--auth-header "$header")
+        auth_cmd+=(--header "$header")
     done
     local cookie
     for cookie in "${AUTH_COOKIES[@]}"; do
@@ -156,7 +157,7 @@ if [[ -n "$RATE_OVERRIDE" ]]; then
         echo -e "${RED}Error:${NC} -r must be a positive integer (got: $RATE_OVERRIDE)"; exit 1
     fi
 else
-    for conf in "$(dirname "$INPUT")/rate_limit.conf" "./rate_limit.conf"; do
+    for conf in "${RECON_RY_PROJECT_DIR:-$(dirname "$INPUT")}/rate_limit.conf" "./rate_limit.conf"; do
         if [[ -f "$conf" ]]; then
             tool_rate=$(grep -E '^katana=' "$conf" | cut -d= -f2 | tr -d ' ')
             default_rate=$(grep -E '^default=' "$conf" | cut -d= -f2 | tr -d ' ')
@@ -194,7 +195,7 @@ URL_COUNT=$(wc -l < "$INPUT" | tr -d ' ')
 # and get collapsed; bare hostnames NOT in wild roots are exact scope entries
 # (e.g. flo.uri.sh) and are kept verbatim. Full URL entries always collapse.
 WAYMORE_DOMAINS_TMP=$(mktemp /tmp/pr_waymore_domains.XXXXXX)
-_proj="$(dirname "$INPUT")"
+_proj="${RECON_RY_PROJECT_DIR:-$(dirname "$INPUT")}"
 python3 - "$_proj" <<'PYEOF'
 import sys, re, os
 
@@ -374,7 +375,13 @@ fi
 phase "katana (active crawler + JS parsing)"
 if [[ $USE_KATANA -eq 1 ]] && command -v katana &>/dev/null; then
     AUTH_ARGS=$(build_auth_args)
-    eval "katana -silent -jc -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS" \
+    KATANA_SCOPE_ARGS=""
+    if [[ -n "${RECON_RY_SCOPE_FILE:-}${RECON_RY_EXACT_HOST:-}" ]]; then
+        CRAWL_SCOPE=$(python3 "$RECON_DIR/scripts/scope_filter.py" crawl-regex --input "$INPUT") || exit 2
+        printf -v KATANA_SCOPE_ARGS '-cs %q -dr' "$CRAWL_SCOPE"
+    fi
+    # Never relax an input hostname to its registrable domain.
+    eval "katana -silent -jc -fs fqdn -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
         < "$INPUT" 2>/dev/null > "$KATANA_TMP"
     result "$(wc -l < "$KATANA_TMP" | tr -d ' ')" "katana"
 elif [[ $USE_KATANA -eq 1 ]]; then
@@ -389,7 +396,7 @@ if [[ $USE_XNLINKFINDER -eq 1 ]] && command -v xnLinkFinder &>/dev/null; then
     xnLinkFinder \
         -i "$INPUT" \
         -o "$XNLF_TMP" \
-        -sf "$WAYMORE_DOMAINS_TMP" \
+        -sf "$DOMAINS_TMP" \
         -t 5 \
         2>/dev/null || true
     result "$(wc -l < "$XNLF_TMP" | tr -d ' ')" "xnLinkFinder"

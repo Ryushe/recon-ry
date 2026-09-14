@@ -8,6 +8,7 @@ source "$SCRIPT_DIR/src/logger.sh"
 source "$SCRIPT_DIR/src/config.sh"
 source "$SCRIPT_DIR/src/output.sh"
 source "$SCRIPT_DIR/src/tools.sh"
+source "$SCRIPT_DIR/src/stages.sh"
 
 logger_init 0
 load_general_config
@@ -205,11 +206,29 @@ else
 fi
 
 param_auth_args="$(build_auth_args param_recon)"
-if [[ "$param_auth_args" != *"--auth-seed"* || "$param_auth_args" != *"--auth-header"* || "$param_auth_args" != *"--cookie"* ]]; then
+if [[ "$param_auth_args" != *"--auth-seed"* || "$param_auth_args" != *"--header"* || "$param_auth_args" != *"--cookie"* ]]; then
     echo "FAIL: param_recon did not receive forwarded auth controls"
     fail=1
 else
     echo "PASS: param_recon receives forwarded auth controls"
+fi
+
+for header_tool in katana exact_katana httpx ffuf nuclei; do
+    tool_header_args="$(build_auth_args "$header_tool")"
+    if [[ "$tool_header_args" != *"Authorization:"* || "$tool_header_args" != *"X-CSRF-Token:"* || "$tool_header_args" != *"Cookie:"* ]]; then
+        echo "FAIL: $header_tool did not receive all authentication and custom headers"
+        fail=1
+    else
+        echo "PASS: $header_tool receives authentication and custom headers"
+    fi
+done
+
+header_aliases="$(python3 "$SCRIPT_DIR/scripts/auth_args.py" --format json --header 'Authorization: Bearer NEW' --auth-header 'X-Legacy: yes')"
+if [[ "$header_aliases" != *'Authorization: Bearer NEW'* || "$header_aliases" != *'X-Legacy: yes'* ]]; then
+    echo "FAIL: --header and --auth-header aliases were not both accepted"
+    fail=1
+else
+    echo "PASS: --header and legacy --auth-header are both accepted"
 fi
 
 param_command="$(get_tool_info param_recon command)"
@@ -228,6 +247,63 @@ if [[ "$redacted_command" == *"SECRET_TOKEN"* || "$redacted_command" == *"SECRET
 else
     echo "PASS: auth redaction hides secret values"
 fi
+
+original_general_config_json="$GENERAL_CONFIG_JSON"
+GENERAL_CONFIG_JSON='{"tools":{"eyewitness":{"large_project_dir":"/mnt/bounty","store_dir":"{{PROJECT_DIR}}/eyewitness"}}}'
+large_eye_store="$(resolve_eyewitness_store_dir "/tmp/reconry_selftest_acme" "app.example.com" "https://app.example.com")"
+if [[ "$large_eye_store" == "/mnt/bounty/reconry_selftest_acme/web/recon/eyewitness" ]]; then
+    echo "PASS: EyeWitness large_project_dir resolves to mounted store"
+else
+    echo "FAIL: EyeWitness large_project_dir resolved to $large_eye_store"
+    fail=1
+fi
+
+GENERAL_CONFIG_JSON='{"tools":{"eyewitness":{"store_dir":"{{PROJECT_DIR}}/eyewitness"}}}'
+legacy_eye_store="$(resolve_eyewitness_store_dir "/tmp/reconry_selftest_acme" "app.example.com" "https://app.example.com")"
+if [[ "$legacy_eye_store" == "/tmp/reconry_selftest_acme/eyewitness" ]]; then
+    echo "PASS: EyeWitness legacy store_dir remains project-local"
+else
+    echo "FAIL: EyeWitness legacy store_dir resolved to $legacy_eye_store"
+    fail=1
+fi
+GENERAL_CONFIG_JSON='{"tools":{"eyewitness":{"large_project_dir":"/mnt/bounty","store_dir":"{{LARGE_PROJECT_DIR}}/archive/{{DOMAIN}}"}}}'
+custom_eye_store="$(resolve_eyewitness_store_dir "/tmp/reconry_selftest_acme" "app.example.com" "https://app.example.com")"
+if [[ "$custom_eye_store" == "/mnt/bounty/archive/app.example.com" ]]; then
+    echo "PASS: EyeWitness custom store template resolves placeholders"
+else
+    echo "FAIL: EyeWitness custom store template resolved to $custom_eye_store"
+    fail=1
+fi
+GENERAL_CONFIG_JSON="$original_general_config_json"
+
+header_profile_check="$(python3 - "$SCRIPT_DIR/config/profiles.yaml" "$SCRIPT_DIR/config/general.yaml" <<'PY'
+import sys, yaml
+
+profiles = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["profiles"]
+general = yaml.safe_load(open(sys.argv[2], encoding="utf-8"))
+expected_stages = [
+    "exact_url_discovery_header",
+    "exact_alive_check",
+    "exact_http_fingerprinting",
+    "exact_param_discovery",
+    "dir_enum",
+    "exact_secret_scan_header",
+    "exact_url_ranking",
+]
+profile = profiles.get("exact-urls-header", {})
+stages = profile.get("stages", [])
+header_discovery = general.get("stages", {}).get("exact_url_discovery_header", {}).get("tools", [])
+header_secrets = general.get("stages", {}).get("exact_secret_scan_header", {}).get("tools", [])
+print("ok" if stages == expected_stages and header_discovery == ["exact_katana"] and header_secrets == ["nuclei"] else "bad")
+PY
+)"
+if [[ "$header_profile_check" == "ok" ]]; then
+    echo "PASS: exact header profile excludes unsupported target-request tools"
+else
+    echo "FAIL: exact header profile missing or includes unsupported target-request tools"
+    fail=1
+fi
+
 
 passive_profile_check="$(python3 - "$SCRIPT_DIR/config/profiles.yaml" "$SCRIPT_DIR/config/general.yaml" <<'PY'
 import sys, yaml
@@ -260,6 +336,68 @@ if [[ "$passive_profile_check" != "ok" ]]; then
     fail=1
 else
     echo "PASS: passive profile is archive/local only"
+fi
+
+cached_report_dir="$project_dir/eyewitness-cache-test"
+mkdir -p "$cached_report_dir/final"
+cat > "$cached_report_dir/final/requests.jsonl" << 'EOF'
+{"url":"https://a.example.com/","title":"A Home","category":"page","screenshot":"screens/a.png","source":"source/a.txt","run_id":"run1","chunk":"chunk_0001","headers":{"Content-Type":"text/html"}}
+{bad-json
+{"url":"https://a.example.com/app.js","title":"App JS","screenshot":"","source":"source/app.js.txt","run_id":"run1","chunk":"chunk_0001","headers":{"Content-Type":"application/javascript"}}
+{"url":"https://a.example.com/admin","title":"Forbidden","category":"unauth","screenshot":"screens/admin.png","source":"source/admin.txt","run_id":"run1","chunk":"chunk_0001","headers":{"Content-Type":"text/html"}}
+{"url":"https://b.example.com/","title":"Capture failed","category":"badhost","error":"DNS failed","screenshot":"","source":"","run_id":"run1","chunk":"chunk_0001","headers":{}}
+EOF
+
+cached_report_check="$("$SCRIPT_DIR/scripts/incremental_eyewitness.py" \
+    --output "$cached_report_dir" \
+    --report-only \
+    --report-style cached \
+    --title "Self Test EyeWitness Report" \
+    --report-page-size 1 2>&1)"
+if [[ ! -f "$cached_report_dir/final/report.html" \
+    || ! -f "$cached_report_dir/final/report_cache.sqlite" \
+    || ! -f "$cached_report_dir/final/assets/report-index.js" \
+    || "$cached_report_check" != *"Central report:"* \
+    || "$(grep -o '"url":"https://a.example.com' "$cached_report_dir/final/assets/report-index.js" | wc -l | tr -d ' ')" != "3" \
+    || "$(grep -c 'Include / Exclude' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'Hide 403s' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'Hide Designs' "$cached_report_dir/final/report.html" || true)" != "0" \
+    || "$(grep -c 'Hide URL pattern' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'Hide same response' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'TXT URLs' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'value="app-error"> Errors <span>1</span>' "$cached_report_dir/final/report.html")" != "1" \
+    || "$(grep -c 'value="capture-error"> Capture Errors <span>1</span>' "$cached_report_dir/final/report.html")" != "1" ]]; then
+    echo "FAIL: cached EyeWitness report did not render expected artifacts"
+    echo "$cached_report_check"
+    fail=1
+else
+    echo "PASS: cached EyeWitness report renders searchable artifacts"
+fi
+
+cached_run_report_check="$(python3 - "$SCRIPT_DIR/scripts/incremental_eyewitness.py" "$cached_report_dir" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+module_path, store = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("incremental_eyewitness", module_path)
+mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
+spec.loader.exec_module(mod)
+
+store_dir = Path(store)
+run_report_dir = store_dir / "runs" / "run1" / "final"
+manifest = store_dir / "final" / "requests.jsonl"
+mod.render_cached_report(run_report_dir, manifest, "Run report", 1, asset_prefix="../../../final/")
+index = (run_report_dir / "assets" / "report-index.js").read_text(encoding="utf-8")
+print("ok" if '"screenshot":"../../../final/screens/a.png"' in index and '"source":"../../../final/source/a.txt"' in index else "bad-run-asset-prefix")
+PY
+)"
+if [[ "$cached_run_report_check" != "ok" ]]; then
+    echo "FAIL: cached run report did not preserve central artifact links ($cached_run_report_check)"
+    fail=1
+else
+    echo "PASS: cached run report preserves central artifact links"
 fi
 
 artifact_retry_check="$(python3 - "$SCRIPT_DIR/scripts/incremental_eyewitness.py" <<'PY'

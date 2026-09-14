@@ -84,7 +84,7 @@ _init_generate_rate_limit_conf() {
 import sys, json
 data = json.load(sys.stdin)
 default = data.get('defaults', {}).get('rate_limit', 150)
-timeout = data.get('defaults', {}).get('timeout', 300)
+timeout = data.get('defaults', {}).get('timeout', 0)
 rl = data.get('rate_limits', {})
 lines = []
 lines.append('timeout=' + str(timeout))

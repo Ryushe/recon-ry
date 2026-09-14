@@ -119,11 +119,14 @@ Description:
     enumeration, and more.
 
 Options:
+    --scope-file <file> Explicit allowed hostnames, wildcard hosts, IPs or CIDRs
+    --out-scope-file <file> Exclusions (always override inclusions)
     --profile <name>    Profile to run (default: full)
     --full              Run full reconnaissance (all stages)
     --subs              Subdomain enumeration only
     --fast              Quick scan (subdomain + alive check)
     --urls              URL discovery and alive check (requires wild.txt)
+    --exact-urls        Full web recon limited to the exact --url host
     --passive           Passive archive URL and parameter discovery only
     --params            Parameter discovery (param_recon)
     --dork              Google dorking only
@@ -133,7 +136,8 @@ Options:
     --url <url>         Target URL/domain to scan
     --timeout <secs>    Kill each tool after this many seconds (0 = no timeout, omit = config default)
     --auth-seed <file>  Owner-only JSON auth seed for supported active HTTP tools
-    --auth-header <h>   Header for supported active HTTP tools; repeatable
+    --header <h>        Header for supported active HTTP tools; repeatable
+    --auth-header <h>   Deprecated alias for --header
     --cookie <value>    Cookie header value for supported active HTTP tools; repeatable
     -v                  Verbose output (show tool names)
     -vv                 Very verbose (show full tool output)
@@ -146,6 +150,7 @@ Profiles:
     subs                Subdomain enumeration only
     fast                Quick scan (subdomain + alive check)
     urls                URL discovery and alive check
+    exact-urls          Full web recon limited to one exact URL host
     passive             Passive archive URL and parameter discovery
     params              Parameter discovery (param_recon)
     secrets             Secret scanning on existing data
@@ -241,7 +246,8 @@ Options:
     -vv                 Very verbose (show full tool output)
     --dry-run           Show what would be executed without running
     --auth-seed <file>  Owner-only JSON auth seed for supported active HTTP tools
-    --auth-header <h>   Header for supported active HTTP tools; repeatable
+    --header <h>        Header for supported active HTTP tools; repeatable
+    --auth-header <h>   Deprecated alias for --header
     --cookie <value>    Cookie header value for supported active HTTP tools; repeatable
     --update            Update tools before running
     -h, --help          Show this help message
@@ -471,6 +477,24 @@ parse_args() {
                 show_command_help "$COMMAND"
                 exit 0
                 ;;
+            --scope-file)
+                if [[ $# -lt 2 || ! -f "$2" || ! -r "$2" ]]; then
+                    log_error "--scope-file requires a readable existing file"
+                    return 2
+                fi
+                RECON_RY_SCOPE_FILE=$(realpath -e -- "$2") || return 2
+                export RECON_RY_SCOPE_FILE
+                shift 2
+                ;;
+            --out-scope-file)
+                if [[ $# -lt 2 || ! -f "$2" || ! -r "$2" ]]; then
+                    log_error "--out-scope-file requires a readable existing file"
+                    return 2
+                fi
+                RECON_RY_OUT_SCOPE_FILE=$(realpath -e -- "$2") || return 2
+                export RECON_RY_OUT_SCOPE_FILE
+                shift 2
+                ;;
             --profile)
                 PROFILE="$2"
                 shift 2
@@ -489,6 +513,10 @@ parse_args() {
                 ;;
             --urls)
                 PROFILE="urls"
+                shift
+                ;;
+            --exact-urls)
+                PROFILE="exact-urls"
                 shift
                 ;;
             --passive)
@@ -544,7 +572,7 @@ parse_args() {
                 export RECON_RY_AUTH_SEED
                 shift 2
                 ;;
-            --auth-header)
+            --header|--auth-header)
                 AUTH_HEADERS+=("$2")
                 shift 2
                 ;;
@@ -621,8 +649,9 @@ main() {
             # Single URL mode (no project)
             if [[ -z "$PROJECT_DIR" && -n "$URL" ]]; then
                 log_info "Running in single URL mode (output to stdout)"
-                run_recon_url_only "$URL" "$PROFILE"
-                exit 0
+                local status=0
+                run_recon_url_only "$URL" "$PROFILE" || status=$?
+                exit "$status"
             fi
 
             # Project mode
@@ -665,8 +694,9 @@ main() {
             # Single URL mode (no project)
             if [[ -z "$PROJECT_DIR" && -n "$URL" ]]; then
                 log_info "Running in single URL mode (output to stdout)"
-                run_recon_url_only "$URL" "$PROFILE"
-                exit 0
+                local status=0
+                run_recon_url_only "$URL" "$PROFILE" || status=$?
+                exit "$status"
             fi
 
             # Project mode

@@ -6,7 +6,7 @@
 
 # Default settings
 defaults:
-  timeout: 300  # Default timeout for tools in seconds
+  timeout: 0  # Default timeout for tools in seconds (0 = no timeout)
   threads: 50   # Default thread count for tools that support it
   retries: 3    # Number of retries for failed tools
   rate_limit: 150 # Default rate limit in requests per second
@@ -45,6 +45,55 @@ stages:
       - hakrawler
       - waybackurls
       - gau
+
+  exact_url_discovery:
+    parallel: false
+    description: "Crawl and archive discovery constrained to the exact target host"
+    tools:
+      - katana
+      - hakrawler
+      - waybackurls
+      - gau
+
+  exact_url_discovery_header:
+    parallel: false
+    description: "Exact-host crawling with request-header forwarding"
+    tools:
+      - exact_katana
+
+  exact_secret_scan_header:
+    parallel: false
+    description: "Exact-host secret scanning with request-header forwarding"
+    tools:
+      - nuclei
+
+  exact_url_ranking:
+    parallel: false
+    description: "Rank exact-host URLs for manual review"
+    tools:
+      - url_ranking
+
+  exact_alive_check:
+    parallel: false
+    description: "Check exact-host URLs for live HTTP services"
+    tools:
+      - httpx
+
+  exact_http_fingerprinting:
+    enabled: true
+    parallel: false
+    description: "Fingerprint exact-host HTTP services"
+    tools:
+      - http_fingerprinting
+
+  exact_param_discovery:
+    parallel: false
+    description: "Discover parameters and JavaScript on exact-host URLs"
+    tools:
+      - param_recon
+      - uro
+      - js_files
+      - unclutter_jsfiles
 
   passive_url_discovery:
     parallel: false
@@ -181,6 +230,13 @@ tools:
     required_files: [wild.txt]
     outputs: [urls.txt]
 
+  exact_katana:
+    type: binary
+    auth_supported: true
+    command: "katana -list {{INPUT}} -d 3 -silent -jc -kf all -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
+    required_files: [urls.txt]
+    outputs: [urls.txt]
+
   hakrawler:
     type: binary
     command: "cat {{INPUT}} | hakrawler -d 3 -plain > {{OUTPUT}}"
@@ -245,6 +301,9 @@ tools:
     command: "python3 {{RECON_DIR}}/scripts/incremental_eyewitness.py --input {{INPUT}} --output {{OUTPUT}} --eyewitness {{EYEWITNESS_PATH}} --python {{EYEWITNESS_PYTHON}} --chunk-size {{EYEWITNESS_CHUNK_SIZE}} --threads {{EYEWITNESS_THREADS}} --timeout {{EYEWITNESS_TIMEOUT}} --max-retries {{EYEWITNESS_MAX_RETRIES}} --continue-on-fail"
     eyewitness_path: "{{RECON_DIR}}/tools/EyeWitness/Python/EyeWitness.py"
     eyewitness_python: "{{RECON_DIR}}/tools/EyeWitness/eyewitness-venv/bin/python"
+    # Leave blank for legacy project-local storage. When set, the default
+    # store_dir is {{LARGE_PROJECT_DIR}}/{{PROJECT_BASENAME}}/web/recon/eyewitness.
+    large_project_dir: ""
     store_dir: "{{PROJECT_DIR}}/eyewitness"
     chunk_size: 4000
     threads: 1

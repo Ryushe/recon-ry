@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased — consolidated contributor draft
+
+- Preserve Hoster/local EyeWitness mounted storage, cached report/search work and exact-host/reduced profiles, with portable defaults and corrected asset links.
+- Preserve repeatable custom headers and the legacy alias, plus unlimited default/missing-config timeout behavior.
+- Add explicit scope-input and artifact gates, strict exclusions, exact crawler boundaries and explicit IP/CIDR authorization without DNS-derived permission.
+- Report timed-out/failed work as incomplete, retain raw partial evidence and per-dispatch outcomes, and propagate status through parallel/background jobs.
+- Recheck saved EyeWitness chunks before dispatch; add offline scope, timeout, resume, cache and configuration regressions.
+- Keep release blocked on third-party request-level containment and authorization verification. No deployment or additional scanning capability is implied.
+
 ## [1.0.0] - 2026-02-10
 
 ### Added
