@@ -101,8 +101,8 @@ check_tool_exists() { return 1; }
 printf '%s\\n' https://example.test > "$TEST_DIR/input"
 rc=0; execute_tool fixture "$TEST_DIR/input" "$TEST_DIR/result.txt" '' '' || rc=$?
 [[ $rc -eq 1 ]]
-unset RECON_RY_SCOPE_FILE
-rc=0; execute_tool fixture "$TEST_DIR/input" "$TEST_DIR/result.txt" '' '' || rc=$?
+printf '%s\\n' https://evil.test > "$TEST_DIR/unauthorized"
+rc=0; execute_tool fixture "$TEST_DIR/unauthorized" "$TEST_DIR/result.txt" '' '' || rc=$?
 [[ $rc -eq 2 ]]
 is_tool_enabled() { return 1; }
 execute_tool fixture "$TEST_DIR/input" "$TEST_DIR/result.txt" '' ''

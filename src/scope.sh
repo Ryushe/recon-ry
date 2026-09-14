@@ -9,6 +9,26 @@ scope_check() {
     python3 "$SCRIPT_DIR/scripts/scope_filter.py" "$@"
 }
 
+# Crawler arguments for katana/exact_katana. `-fs fqdn` is unconditional: an
+# input hostname is never relaxed to its registrable domain, scope or not.
+# The `-cs` crawl regex needs an explicit scope, so an unscoped run stays
+# fqdn-bounded and follows redirects as it did before the scope gates existed.
+katana_crawl_args() {
+    local tool="$1" input_file="$2"
+    case "$tool" in
+        katana|exact_katana) ;;
+        *) return 0 ;;
+    esac
+    local args="-fs fqdn"
+    if scope_enabled; then
+        local crawl_scope
+        crawl_scope=$(scope_check crawl-regex --input "$input_file") || return 2
+        printf -v crawl_scope "%q" "$crawl_scope"
+        args="$args -cs $crawl_scope -dr"
+    fi
+    printf '%s' "$args"
+}
+
 scope_filter_artifacts() {
     scope_enabled || return 0
     local project_dir="$1" directory file candidate evidence
@@ -47,8 +67,12 @@ scope_prepare_input() {
             ;;
         *)
             if ! scope_enabled; then
-                log_error "Tool $tool blocked: explicit --scope-file is required"
-                return 2
+                # Containment is opt-in. Without --scope-file the tool runs
+                # against its unfiltered input, as it did before the scope
+                # gates existed; warn so the run log records the exposure.
+                log_warning "Tool $tool running unfiltered: no --scope-file supplied"
+                printf '%s' "$source"
+                return 0
             fi
             ;;
     esac
