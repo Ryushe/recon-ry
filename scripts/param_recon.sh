@@ -378,7 +378,12 @@ if [[ $USE_KATANA -eq 1 ]] && command -v katana &>/dev/null; then
     KATANA_SCOPE_ARGS=""
     if [[ -n "${RECON_RY_SCOPE_FILE:-}${RECON_RY_EXACT_HOST:-}" ]]; then
         CRAWL_SCOPE=$(python3 "$RECON_DIR/scripts/scope_filter.py" crawl-regex --input "$INPUT") || exit 2
-        printf -v KATANA_SCOPE_ARGS '-cs %q -dr' "$CRAWL_SCOPE"
+        # Build the format from '%s' rather than a literal leading '-': a format
+        # string starting with a dash is parsed by printf as options, which left
+        # KATANA_SCOPE_ARGS empty and silently dropped the crawl scope.
+        printf -v KATANA_SCOPE_ARGS '%s %q %s' '-cs' "$CRAWL_SCOPE" '-dr'
+        [[ -n "$KATANA_SCOPE_ARGS" ]] || {
+            echo -e "${RED}Error:${NC} failed to build katana crawl scope"; exit 2; }
     fi
     # Never relax an input hostname to its registrable domain.
     eval "katana -silent -jc -fs fqdn -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
