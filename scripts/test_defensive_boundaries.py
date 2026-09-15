@@ -96,10 +96,58 @@ filtered=$(scope_prepare_input httpx "$PROJECT_DIR/alive.txt")
 printf '%s\\n' 192.0.2.1 > "$PROJECT_DIR/ips.txt"
 rc=0; scope_prepare_input naabu "$PROJECT_DIR/ips.txt" || rc=$?
 [[ $rc -eq 2 ]]
-unset RECON_RY_SCOPE_FILE
-rc=0; scope_prepare_input httpx "$PROJECT_DIR/alive.txt" || rc=$?
-[[ $rc -eq 2 ]]
 ''')
+
+    def test_unscoped_run_passes_input_through_unfiltered(self):
+        """Without --scope-file containment is off: input is used as-is."""
+        output = self.shell('''printf '%s\\n' https://example.test/a https://evil.test/b > "$PROJECT_DIR/alive.txt"
+unset RECON_RY_SCOPE_FILE
+selected=$(scope_prepare_input httpx "$PROJECT_DIR/alive.txt")
+[[ "$selected" == "$PROJECT_DIR/alive.txt" ]]
+[[ $(wc -l < "$selected") -eq 2 ]]
+''')
+        self.assertIn("running unfiltered", output)
+
+    def test_every_configured_tool_runs_without_a_scope_file(self):
+        """Programs without a published scope must still run the whole pipeline.
+
+        Each configured tool has to clear the input gate unscoped and receive
+        its original input, so no stage can become unreachable just because
+        --scope-file was omitted.
+        """
+        import yaml
+
+        config = yaml.safe_load((ROOT / "config" / "general.yaml").read_text())
+        tools = sorted(config.get("tools", {}))
+        self.assertTrue(tools, "no tools configured")
+        self.shell('''printf '%s\\n' https://example.test/a > "$PROJECT_DIR/in.txt"
+unset RECON_RY_SCOPE_FILE
+for tool in ''' + " ".join(tools) + '''; do
+  selected=$(scope_prepare_input "$tool" "$PROJECT_DIR/in.txt") || { echo "blocked: $tool"; exit 1; }
+  [[ "$selected" == "$PROJECT_DIR/in.txt" ]] || { echo "altered: $tool -> $selected"; exit 1; }
+done
+''')
+
+    def test_katana_stays_fqdn_bounded_with_and_without_scope(self):
+        """`-fs fqdn` is unconditional; only the `-cs` crawl regex needs scope."""
+        scoped = self.shell('''printf '%s\\n' https://a.example.test/ > "$PROJECT_DIR/wild.txt"
+printf 'ARGS:%s\\n' "$(katana_crawl_args katana "$PROJECT_DIR/wild.txt")"
+''', "a.example.test\n")
+        self.assertIn("-fs fqdn", scoped)
+        self.assertIn("-cs ", scoped)
+        self.assertIn("-dr", scoped)
+
+        unscoped = self.shell('''printf '%s\\n' https://a.example.test/ > "$PROJECT_DIR/wild.txt"
+unset RECON_RY_SCOPE_FILE
+printf 'ARGS:%s\\n' "$(katana_crawl_args katana "$PROJECT_DIR/wild.txt")"
+''')
+        args = [l for l in unscoped.splitlines() if l.startswith("ARGS:")][0]
+        self.assertEqual(args, "ARGS:-fs fqdn")
+
+    def test_katana_crawl_args_ignores_non_crawler_tools(self):
+        output = self.shell('''printf 'ARGS:[%s]\\n' "$(katana_crawl_args httpx "$PROJECT_DIR/none.txt")"
+''')
+        self.assertIn("ARGS:[]", output)
 
     def test_explicit_ip_scope_retains_port_input(self):
         self.shell('''printf '%s\\n' 192.0.2.1 198.51.100.1 > "$PROJECT_DIR/ips.txt"

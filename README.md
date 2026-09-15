@@ -17,11 +17,19 @@ A modular Bash reconnaissance framework for bug bounty and web attack-surface ma
 
 ## Defensive scope and incomplete runs
 
-**Compatibility change:** active tools require an explicit `--scope-file`, except
-exact profiles which may use the exact `--url` hostname. Domain scope does not
-automatically authorize scanning its resolved IPs. Missing/invalid scope files
-fail closed; the current PR does not claim complete browser/subrequest egress
-containment and is not approved for deployment.
+Scope containment is **opt-in**. Supplying `--scope-file` (or an exact profile's
+`--url` hostname) filters every active tool's input, constrains the crawler at
+request time and filters promoted artifacts. Without one, tools run against
+their unfiltered input as they always have, and each logs a
+`running unfiltered` warning. Katana still crawls with `-fs fqdn` either way,
+so an input hostname is never relaxed to its registrable domain; only the
+`-cs` crawl regex depends on having a scope.
+
+When a scope *is* supplied it is enforced fail-closed: an invalid or empty scope
+file, or an input that filters to nothing, stops the tool rather than falling
+back to unfiltered input. Domain scope does not automatically authorize scanning
+its resolved IPs. This does not claim complete browser/subrequest egress
+containment.
 
 See [defensive maintenance boundaries](docs/defensive-maintenance.md) for explicit
 scope files, exact-host behavior, IP authorization limits, timeout receipts,

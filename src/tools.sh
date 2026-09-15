@@ -434,11 +434,10 @@ execute_tool() {
     fi
 
     # Constrain crawler requests at source as well as filtering their results.
-    if [[ "$tool" == "katana" || "$tool" == "exact_katana" ]]; then
-        local crawl_scope
-        crawl_scope=$(scope_check crawl-regex --input "$input_file") || return 2
-        printf -v crawl_scope "%q" "$crawl_scope"
-        command="$command -fs fqdn -cs $crawl_scope -dr"
+    local crawl_args
+    crawl_args=$(katana_crawl_args "$tool" "$input_file") || return 2
+    if [[ -n "$crawl_args" ]]; then
+        command="$command $crawl_args"
     fi
 
     local auth_args
