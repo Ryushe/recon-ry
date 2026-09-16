@@ -94,15 +94,22 @@ copy_outputs_to_history() {
                 continue
             fi
 
-            awk '
-                NR==FNR {
-                    if ($0 != "") seen[$0]=1
-                    next
+            # Read the baseline via getline so an EMPTY baseline is handled
+            # correctly. The classic `NR==FNR` two-file idiom breaks when the
+            # first file is empty: awk never enters that file, so NR==FNR turns
+            # true for the source's first record and the whole source is treated
+            # as baseline, yielding an empty delta. That silently dropped the
+            # first run's entries (empty baseline) from history/{date}/.
+            awk -v basefile="$base" '
+                BEGIN {
+                    while ((getline line < basefile) > 0) {
+                        if (line != "") seen[line]=1
+                    }
                 }
                 {
                     if ($0 != "" && !seen[$0] && !added[$0]++) print $0
                 }
-            ' "$base" "$src" > "$tmp"
+            ' "$src" > "$tmp"
 
             if [[ -s "$tmp" ]]; then
                 merge_with_anew "$tmp" "$dest"
@@ -132,15 +139,22 @@ copy_outputs_to_history() {
             fi
 
             mkdir -p "$(dirname "$dest")"
-            awk '
-                NR==FNR {
-                    if ($0 != "") seen[$0]=1
-                    next
+            # Read the baseline via getline so an EMPTY baseline is handled
+            # correctly. The classic `NR==FNR` two-file idiom breaks when the
+            # first file is empty: awk never enters that file, so NR==FNR turns
+            # true for the source's first record and the whole source is treated
+            # as baseline, yielding an empty delta. That silently dropped the
+            # first run's entries (empty baseline) from history/{date}/.
+            awk -v basefile="$base" '
+                BEGIN {
+                    while ((getline line < basefile) > 0) {
+                        if (line != "") seen[line]=1
+                    }
                 }
                 {
                     if ($0 != "" && !seen[$0] && !added[$0]++) print $0
                 }
-            ' "$base" "$src" > "$tmp"
+            ' "$src" > "$tmp"
 
             if [[ -s "$tmp" ]]; then
                 merge_with_anew "$tmp" "$dest"

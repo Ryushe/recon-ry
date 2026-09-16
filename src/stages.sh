@@ -54,6 +54,32 @@ normalize_roots() {
     | awk '{gsub(/[ \t\r]+/,"")} NF && !seen[$0]++'
 }
 
+# Ensure $temp_dir/roots.txt exists for passive archive consumers.
+# subdomain_enum generates it directly (from --url or wild.txt); this covers
+# profiles that skip subdomain_enum (urls, passive, url-only) where waybackurls,
+# gau, and passive_param_recon still need a roots list to query. Passive archive
+# tools take a domain and expand subdomains themselves (waybackurls includes
+# subs by default; gau needs --subs), so they consume roots, not the resolved
+# host inventory. Never clobber a roots.txt an earlier step already produced.
+ensure_roots_file() {
+    local project_dir="$1"
+    local temp_dir="$project_dir/.tmp_run"
+
+    [[ -s "$temp_dir/roots.txt" ]] && return 0
+    mkdir -p "$temp_dir"
+    if [[ -s "$project_dir/wild.txt" ]]; then
+        normalize_roots "$project_dir/wild.txt" > "$temp_dir/roots.txt"
+        log_debug "Generated roots.txt from wild.txt"
+    elif [[ -s "$project_dir/hosts.txt" ]]; then
+        # No scope-roots input (unusual: wild.txt is normally present and
+        # read-only). Fall back to the accumulated inventory so passive tools
+        # are not silently skipped — matches the pre-split behavior of feeding
+        # them the host list.
+        normalize_roots "$project_dir/hosts.txt" > "$temp_dir/roots.txt"
+        log_debug "Generated roots.txt from hosts.txt (no wild.txt present)"
+    fi
+}
+
 expand_eyewitness_store_template() {
     local template="$1"
     local project_dir="$2"
@@ -231,16 +257,20 @@ execute_stage() {
         ensure_hosts_seed "$project_dir" "$temp_dir/roots.txt"
     fi
 
-    # Any stage consuming the host inventory needs it populated even when
+    # Any stage consuming the host inventory (active crawlers katana/hakrawler)
+    # or the roots list (passive archive tools) needs those populated even when
     # subdomain_enum did not run in this profile.
     ensure_hosts_seed "$project_dir"
+    ensure_roots_file "$project_dir"
 
     # Passive archive profiles can run from a URL/domain seed without requiring
-    # a prior live stage or a pre-existing wild.txt.
+    # a prior live stage or a pre-existing wild.txt. Passive tools read the roots
+    # list and expand subdomains themselves, so seed the roots file (not the dead
+    # wild.txt input) and record the seed host in the inventory.
     if [[ "$stage" == "passive_url_discovery" || "$stage" == "passive_param_discovery" ]]; then
-        if [[ ! -s "$project_dir/hosts.txt" && ! -s "$project_dir/wild.txt" && -n "$domain" ]]; then
+        if [[ ! -s "$temp_dir/roots.txt" && ! -s "$project_dir/wild.txt" && -n "$domain" ]]; then
             mkdir -p "$temp_dir"
-            printf '%s\n' "$domain" > "$temp_dir/wild.txt"
+            printf '%s\n' "$domain" > "$temp_dir/roots.txt"
             printf '%s\n' "$domain" >> "$project_dir/hosts.txt"
             log_info "Passive seed domain: $domain"
         fi
@@ -497,6 +527,12 @@ run_recon_project() {
     if [[ "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
         # Reuse URL-discovery tools with a transient single-host input. This is
         # not a wildcard inventory and is never promoted into project wild.txt.
+        # Seed both consumer inputs so exact-urls stays constrained to the one
+        # host: hosts.txt for the active crawlers (katana/hakrawler) and roots.txt
+        # for the passive archive tools (waybackurls/gau) — otherwise they would
+        # fall back to the full accumulated project inventory.
+        printf '%s\n' "$domain" > "$temp_dir/hosts.txt"
+        printf '%s\n' "$domain" > "$temp_dir/roots.txt"
         printf '%s\n' "$domain" > "$temp_dir/wild.txt"
     fi
 

@@ -247,14 +247,14 @@ tools:
   waybackurls:
     type: binary
     command: "cat {{INPUT}} | waybackurls > {{OUTPUT}}"
-    required_files: [hosts.txt]
+    required_files: [roots.txt]
     outputs: [urls.txt]
     note: "waybackurls does not have native rate limiting"
 
   gau:
     type: binary
-    command: "cat {{INPUT}} | gau --threads 1 --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
-    required_files: [hosts.txt]
+    command: "cat {{INPUT}} | gau --threads 1 --subs --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
+    required_files: [roots.txt]
     outputs: [urls.txt]
     note: "gau does not have native rate limiting"
 
@@ -325,7 +325,7 @@ tools:
   passive_param_recon:
     type: script
     command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --passive-only && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
-    required_files: [hosts.txt]
+    required_files: [roots.txt]
     outputs: [params_raw.txt]
 
   gau_params:

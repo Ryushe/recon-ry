@@ -142,7 +142,7 @@ Run help:
 Notes:
 - Either `--project` or `--url` must be provided.
 - `wild.txt` and `urls.txt` are treated as read-only inputs during recon runs.
-- `hosts.txt` is the writable host inventory: scope roots plus every subdomain found by `subdomain_enum`. URL discovery reads it.
+- `hosts.txt` is the writable host inventory: scope roots plus every subdomain found by `subdomain_enum`. Active crawlers (katana, hakrawler) read it; passive archive tools (waybackurls, gau) query the roots and expand subdomains themselves.
 - In project mode, results and deltas are saved under date-based history directories.
 - Auth is opt-in. It is only applied to active HTTP-capable tools: katana, httpx, HTTP fingerprinting, param_recon's Katana path, ffuf, and nuclei.
 - Passive recon, DNS/IP enrichment, naabu, dorking, and local filesystem secret scanning stay unauthenticated.
@@ -416,7 +416,7 @@ Missing config files are restored from `config/defaults/` when possible.
 ### Output Files
 
 - `wild.txt` - Root / wildcard-base domains; read-only input that seeds subdomain enumeration
-- `hosts.txt` - Host inventory: scope roots plus discovered subdomains; input for URL discovery
+- `hosts.txt` - Host inventory: scope roots plus discovered subdomains; input for active crawlers (katana, hakrawler). Passive archive tools query roots directly.
 - `urls.txt` - All URLs (subdomains + discovered URLs)
 - `alive.txt` - Live hosts (filtered by httpx)
 - `ips.txt` - Unique IPs extracted from the URL corpus

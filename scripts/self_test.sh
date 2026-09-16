@@ -77,6 +77,10 @@ init_history_baseline "$project_dir" "$date_dir"
 simulate_stage_subdomain_enum() {
     printf '%s\n' 'c.example.com' >> "$project_dir/wild.txt"
     printf '%s\n' 'd.example.com' >> "$project_dir/wild.txt"
+    # Real subdomain_enum writes the host inventory (hosts.txt), a declared
+    # output that must flow into history/{date}/. wild.txt is a read-only input.
+    printf '%s\n' 'c.example.com' >> "$project_dir/hosts.txt"
+    printf '%s\n' 'd.example.com' >> "$project_dir/hosts.txt"
 }
 
 simulate_stage_url_discovery() {
@@ -125,6 +129,7 @@ copy_outputs_to_history "$project_dir" "$date_dir"
 # Re-baseline same day, simulate another run
 init_history_baseline "$project_dir" "$date_dir"
 printf '%s\n' 'e.example.com' >> "$project_dir/wild.txt"
+printf '%s\n' 'e.example.com' >> "$project_dir/hosts.txt"
 printf '%s\n' 'https://e.example.com/' >> "$project_dir/urls.txt"
 create_global_urls "$project_dir"
 printf '%s\n' 'https://e.example.com/' >> "$project_dir/alive.txt"
@@ -154,6 +159,9 @@ expect_count() {
 }
 
 # Expect only new entries from run 1 and run 2.
+# hosts.txt is a declared enum output (not excluded like wild.txt), so its
+# per-run delta must land in history/{date}/.
+expect_count "$date_dir/hosts.txt" 3
 expect_count "$date_dir/alive.txt" 3
 expect_count "$date_dir/params_raw.txt" 3
 expect_count "$date_dir/params.txt" 3
@@ -505,20 +513,56 @@ for enum_tool in subfinder crt_sh assetfinder amass; do
         fail=1
     fi
 done
-# URL discovery and passive param recon consume the inventory, not the roots.
+# No consumer reads the read-only wild.txt any more.
 for consumer in katana hakrawler waybackurls gau passive_param_recon; do
     consumer_in="$(get_tool_info "$consumer" "required_files")"
     if [[ "$consumer_in" == *'wild.txt'* ]]; then
-        echo "FAIL: $consumer still reads wild.txt instead of hosts.txt"
-        fail=1
-    fi
-    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
-        echo "FAIL: $consumer does not read hosts.txt (got: $consumer_in)"
+        echo "FAIL: $consumer still reads the read-only wild.txt"
         fail=1
     fi
 done
+# Active crawlers need the resolved host inventory.
+for consumer in katana hakrawler; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
+        echo "FAIL: active crawler $consumer does not read hosts.txt (got: $consumer_in)"
+        fail=1
+    fi
+    if [[ "$consumer_in" == *'roots.txt'* ]]; then
+        echo "FAIL: active crawler $consumer reads roots.txt; needs the resolved host inventory"
+        fail=1
+    fi
+done
+# Passive archive tools query the roots and expand subdomains themselves; feeding
+# them the full host inventory is wasteful, and switching them to roots without
+# subdomain coverage would silently regress (gau drops subs unless --subs is set,
+# empirically verified: `echo hc2tooling.com | gau` returns 0 URLs, `--subs`
+# returns its subdomains).
+for consumer in waybackurls gau passive_param_recon; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" != *'roots.txt'* ]]; then
+        echo "FAIL: passive tool $consumer does not read roots.txt (got: $consumer_in)"
+        fail=1
+    fi
+    if [[ "$consumer_in" == *'hosts.txt'* ]]; then
+        echo "FAIL: passive tool $consumer reads hosts.txt; should query roots"
+        fail=1
+    fi
+done
+# gau must pass --subs so root-only input still covers subdomains.
+gau_cmd="$(get_tool_info gau "command")"
+if [[ "$gau_cmd" != *'--subs'* ]]; then
+    echo "FAIL: gau reads roots without --subs (silent subdomain-coverage regression)"
+    fail=1
+fi
+# waybackurls includes subdomains by default (no --no-subs), so no flag needed.
+wb_cmd="$(get_tool_info waybackurls "command")"
+if [[ "$wb_cmd" == *'-no-subs'* ]]; then
+    echo "FAIL: waybackurls passes -no-subs, dropping subdomain coverage"
+    fail=1
+fi
 if [[ "${fail:-0}" -eq 0 ]]; then
-    echo "PASS: enum writes hosts.txt and URL discovery reads it"
+    echo "PASS: active crawlers read hosts.txt; passive tools read roots (+gau --subs)"
 fi
 
 # wild.txt must survive hosts.txt seeding untouched.
@@ -534,6 +578,27 @@ if [[ ! -s "$project_dir/hosts.txt" ]]; then
     echo "FAIL: ensure_hosts_seed left hosts.txt empty"
     fail=1
 fi
+
+# ensure_roots_file must materialize .tmp_run/roots.txt from wild.txt for
+# profiles that skip subdomain_enum (urls, passive), so passive tools have a
+# roots list to read. It must not clobber a roots.txt already generated.
+rm -f "$project_dir/.tmp_run/roots.txt"
+ensure_roots_file "$project_dir"
+if [[ ! -s "$project_dir/.tmp_run/roots.txt" ]]; then
+    echo "FAIL: ensure_roots_file did not generate roots.txt from wild.txt"
+    fail=1
+else
+    echo "PASS: ensure_roots_file materializes roots.txt from wild.txt"
+fi
+printf 'sentinel-root.example\n' > "$project_dir/.tmp_run/roots.txt"
+ensure_roots_file "$project_dir"
+if [[ "$(cat "$project_dir/.tmp_run/roots.txt")" != 'sentinel-root.example' ]]; then
+    echo "FAIL: ensure_roots_file clobbered an existing roots.txt"
+    fail=1
+else
+    echo "PASS: ensure_roots_file preserves an existing roots.txt"
+fi
+rm -f "$project_dir/.tmp_run/roots.txt"
 
 # Every enum tool must consume the roots file, not a scalar {{DOMAIN}}.
 for enum_tool in subfinder crt_sh assetfinder amass; do
