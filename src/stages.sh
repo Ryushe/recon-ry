@@ -12,6 +12,74 @@ dir_has_contents() {
     [[ -d "$dir_path" ]] && find "$dir_path" -mindepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
+# Normalize a hosts/roots file into unique, lowercased base hostnames. Strips
+# comments, scheme, userinfo, path/query/fragment, port, leading '*.' and any
+# trailing '.'. Deliberately does NOT reduce to eTLD+1: wild.txt already holds
+# registrable roots / wildcard bases, and multi-label eTLDs such as '.com.br'
+# make naive label-trimming wrong (aquiris.com.br -> com.br).
+# hosts.txt is the writable host inventory: scope roots plus every subdomain
+# discovered by subdomain_enum. wild.txt stays a read-only roots input. Seed the
+# inventory from the roots so url_discovery still covers the roots themselves on
+# a fresh project, or when subdomain_enum is disabled for the selected profile.
+ensure_hosts_seed() {
+    local project_dir="$1"
+    local roots_file="${2:-}"
+
+    [[ -f "$project_dir/hosts.txt" ]] || touch "$project_dir/hosts.txt"
+    if [[ -n "$roots_file" && -s "$roots_file" ]]; then
+        merge_with_anew "$roots_file" "$project_dir/hosts.txt"
+        return 0
+    fi
+    if [[ ! -s "$project_dir/hosts.txt" && -s "$project_dir/wild.txt" ]]; then
+        local seeded
+        seeded="$(mktemp)"
+        normalize_roots "$project_dir/wild.txt" > "$seeded"
+        merge_with_anew "$seeded" "$project_dir/hosts.txt"
+        rm -f "$seeded"
+        log_debug "Seeded hosts.txt from wild.txt roots"
+    fi
+}
+
+normalize_roots() {
+    local file="$1"
+    sed -e 's/#.*$//' \
+        -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' \
+        -e 's/^[^/@]*@//' \
+        -e 's#[/?].*$##' \
+        -e 's/:[0-9]\+$//' \
+        -e 's/^\*\.//' \
+        -e 's/\.$//' \
+        "$file" \
+    | tr '[:upper:]' '[:lower:]' \
+    | awk '{gsub(/[ \t\r]+/,"")} NF && !seen[$0]++'
+}
+
+# Ensure $temp_dir/roots.txt exists for passive archive consumers.
+# subdomain_enum generates it directly (from --url or wild.txt); this covers
+# profiles that skip subdomain_enum (urls, passive, url-only) where waybackurls,
+# gau, and passive_param_recon still need a roots list to query. Passive archive
+# tools take a domain and expand subdomains themselves (waybackurls includes
+# subs by default; gau needs --subs), so they consume roots, not the resolved
+# host inventory. Never clobber a roots.txt an earlier step already produced.
+ensure_roots_file() {
+    local project_dir="$1"
+    local temp_dir="$project_dir/.tmp_run"
+
+    [[ -s "$temp_dir/roots.txt" ]] && return 0
+    mkdir -p "$temp_dir"
+    if [[ -s "$project_dir/wild.txt" ]]; then
+        normalize_roots "$project_dir/wild.txt" > "$temp_dir/roots.txt"
+        log_debug "Generated roots.txt from wild.txt"
+    elif [[ -s "$project_dir/hosts.txt" ]]; then
+        # No scope-roots input (unusual: wild.txt is normally present and
+        # read-only). Fall back to the accumulated inventory so passive tools
+        # are not silently skipped — matches the pre-split behavior of feeding
+        # them the host list.
+        normalize_roots "$project_dir/hosts.txt" > "$temp_dir/roots.txt"
+        log_debug "Generated roots.txt from hosts.txt (no wild.txt present)"
+    fi
+}
+
 expand_eyewitness_store_template() {
     local template="$1"
     local project_dir="$2"
@@ -161,31 +229,49 @@ execute_stage() {
         return 0
     fi
 
-    # Special check for subdomain_enum: tools need a domain; infer from wild.txt if URL not provided
+    # subdomain_enum tools take a domain per invocation, and wild.txt is a
+    # read-only roots / wildcard-base input (see commit 65189ed). Enumerate
+    # EVERY root rather than line 1: wild.txt is sorted, so line 1 is the
+    # alphabetically smallest entry, not a registrable root. Roots are written
+    # to a run-local file the enum tools consume via {{ROOTS_FILE}}.
     if [[ "$stage" == "subdomain_enum" ]]; then
-        if [[ -z "$domain" ]]; then
-            if [[ -s "$project_dir/wild.txt" ]]; then
-                domain=$(head -n 1 "$project_dir/wild.txt" | sed -e 's|^https\?://||' -e 's|/.*||')
-                if [[ -n "$domain" ]]; then
-                    log_info "Subdomain enum domain inferred from wild.txt: $domain"
-                else
-                    log_warning "Stage subdomain_enum skipped: unable to infer domain from wild.txt"
-                    return 0
-                fi
-            else
-                log_warning "Stage subdomain_enum skipped: no URL provided and wild.txt not found"
-                log_info "Subdomain enumeration requires --url to be specified"
-                return 0
-            fi
+        mkdir -p "$temp_dir"
+        if [[ -n "$domain" ]]; then
+            printf '%s\n' "$domain" > "$temp_dir/roots.seed"
+            normalize_roots "$temp_dir/roots.seed" > "$temp_dir/roots.txt"
+            rm -f "$temp_dir/roots.seed"
+        elif [[ -s "$project_dir/wild.txt" ]]; then
+            normalize_roots "$project_dir/wild.txt" > "$temp_dir/roots.txt"
+        else
+            log_warning "Stage subdomain_enum skipped: no URL provided and wild.txt not found"
+            log_info "Subdomain enumeration requires --url or a seeded wild.txt"
+            return 0
         fi
+        if [[ ! -s "$temp_dir/roots.txt" ]]; then
+            log_warning "Stage subdomain_enum skipped: no usable roots after normalization"
+            return 0
+        fi
+        # Keep $domain populated for logging and any {{DOMAIN}} fallback.
+        domain="$(head -n 1 "$temp_dir/roots.txt")"
+        log_info "Subdomain enum roots: $(wc -l < "$temp_dir/roots.txt") from wild.txt"
+        ensure_hosts_seed "$project_dir" "$temp_dir/roots.txt"
     fi
 
+    # Any stage consuming the host inventory (active crawlers katana/hakrawler)
+    # or the roots list (passive archive tools) needs those populated even when
+    # subdomain_enum did not run in this profile.
+    ensure_hosts_seed "$project_dir"
+    ensure_roots_file "$project_dir"
+
     # Passive archive profiles can run from a URL/domain seed without requiring
-    # a prior live stage or a pre-existing wild.txt.
+    # a prior live stage or a pre-existing wild.txt. Passive tools read the roots
+    # list and expand subdomains themselves, so seed the roots file (not the dead
+    # wild.txt input) and record the seed host in the inventory.
     if [[ "$stage" == "passive_url_discovery" || "$stage" == "passive_param_discovery" ]]; then
-        if [[ ! -s "$project_dir/wild.txt" && ! -s "$temp_dir/wild.txt" && -n "$domain" ]]; then
+        if [[ ! -s "$temp_dir/roots.txt" && ! -s "$project_dir/wild.txt" && -n "$domain" ]]; then
             mkdir -p "$temp_dir"
-            printf '%s\n' "$domain" > "$temp_dir/wild.txt"
+            printf '%s\n' "$domain" > "$temp_dir/roots.txt"
+            printf '%s\n' "$domain" >> "$project_dir/hosts.txt"
             log_info "Passive seed domain: $domain"
         fi
     fi
@@ -441,6 +527,12 @@ run_recon_project() {
     if [[ "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
         # Reuse URL-discovery tools with a transient single-host input. This is
         # not a wildcard inventory and is never promoted into project wild.txt.
+        # Seed both consumer inputs so exact-urls stays constrained to the one
+        # host: hosts.txt for the active crawlers (katana/hakrawler) and roots.txt
+        # for the passive archive tools (waybackurls/gau) — otherwise they would
+        # fall back to the full accumulated project inventory.
+        printf '%s\n' "$domain" > "$temp_dir/hosts.txt"
+        printf '%s\n' "$domain" > "$temp_dir/roots.txt"
         printf '%s\n' "$domain" > "$temp_dir/wild.txt"
     fi
 

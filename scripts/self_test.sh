@@ -77,6 +77,10 @@ init_history_baseline "$project_dir" "$date_dir"
 simulate_stage_subdomain_enum() {
     printf '%s\n' 'c.example.com' >> "$project_dir/wild.txt"
     printf '%s\n' 'd.example.com' >> "$project_dir/wild.txt"
+    # Real subdomain_enum writes the host inventory (hosts.txt), a declared
+    # output that must flow into history/{date}/. wild.txt is a read-only input.
+    printf '%s\n' 'c.example.com' >> "$project_dir/hosts.txt"
+    printf '%s\n' 'd.example.com' >> "$project_dir/hosts.txt"
 }
 
 simulate_stage_url_discovery() {
@@ -125,6 +129,7 @@ copy_outputs_to_history "$project_dir" "$date_dir"
 # Re-baseline same day, simulate another run
 init_history_baseline "$project_dir" "$date_dir"
 printf '%s\n' 'e.example.com' >> "$project_dir/wild.txt"
+printf '%s\n' 'e.example.com' >> "$project_dir/hosts.txt"
 printf '%s\n' 'https://e.example.com/' >> "$project_dir/urls.txt"
 create_global_urls "$project_dir"
 printf '%s\n' 'https://e.example.com/' >> "$project_dir/alive.txt"
@@ -154,6 +159,9 @@ expect_count() {
 }
 
 # Expect only new entries from run 1 and run 2.
+# hosts.txt is a declared enum output (not excluded like wild.txt), so its
+# per-run delta must land in history/{date}/.
+expect_count "$date_dir/hosts.txt" 3
 expect_count "$date_dir/alive.txt" 3
 expect_count "$date_dir/params_raw.txt" 3
 expect_count "$date_dir/params.txt" 3
@@ -453,6 +461,154 @@ if [[ "$artifact_retry_check" != "ok" ]]; then
     fail=1
 else
     echo "PASS: EyeWitness artifact copy retries with shorter names"
+fi
+
+# --- subdomain_enum roots normalization -------------------------------------
+# Regression for the subdomain_enum false negative: wild.txt is sorted, so
+# `head -n 1` returned the alphabetically smallest entry (a deep leaf), and the
+# enum tools silently enumerated one non-root host. All roots must survive
+# normalization, and multi-label eTLDs must not be collapsed.
+roots_fixture="$project_dir/roots_fixture.txt"
+cat > "$roots_fixture" << 'EOF'
+2021-1.ap-northeast-2.devtools.example.com
+*.fortnite.example
+https://EXAMPLE.com/some/path
+aquiris.com.br
+example.com:8443
+3lateral.com.
+
+# comment line
+aquiris.com.br
+EOF
+
+roots_out="$(normalize_roots "$roots_fixture")"
+for expected in 'example.com' 'fortnite.example' 'aquiris.com.br' '3lateral.com' \
+                '2021-1.ap-northeast-2.devtools.example.com'; do
+    if ! grep -qx "$expected" <<< "$roots_out"; then
+        echo "FAIL: normalize_roots dropped $expected"
+        fail=1
+    fi
+done
+if grep -qx 'com.br' <<< "$roots_out"; then
+    echo "FAIL: normalize_roots collapsed a multi-label eTLD to com.br"
+    fail=1
+fi
+if [[ "$(wc -l <<< "$roots_out")" -ne 5 ]]; then
+    echo "FAIL: normalize_roots expected 5 unique roots, got $(wc -l <<< "$roots_out")"
+    fail=1
+fi
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: normalize_roots keeps every root and preserves multi-label eTLDs"
+fi
+
+# Enum tools write the host inventory; wild.txt is never a tool output.
+for enum_tool in subfinder crt_sh assetfinder amass; do
+    enum_out="$(get_tool_info "$enum_tool" "outputs")"
+    if [[ "$enum_out" != *'hosts.txt'* ]]; then
+        echo "FAIL: $enum_tool does not write hosts.txt (got: $enum_out)"
+        fail=1
+    fi
+    if [[ "$enum_out" == *'wild.txt'* ]]; then
+        echo "FAIL: $enum_tool still declares wild.txt as an output"
+        fail=1
+    fi
+done
+# No consumer reads the read-only wild.txt any more.
+for consumer in katana hakrawler waybackurls gau passive_param_recon; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" == *'wild.txt'* ]]; then
+        echo "FAIL: $consumer still reads the read-only wild.txt"
+        fail=1
+    fi
+done
+# Active crawlers need the resolved host inventory.
+for consumer in katana hakrawler; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
+        echo "FAIL: active crawler $consumer does not read hosts.txt (got: $consumer_in)"
+        fail=1
+    fi
+    if [[ "$consumer_in" == *'roots.txt'* ]]; then
+        echo "FAIL: active crawler $consumer reads roots.txt; needs the resolved host inventory"
+        fail=1
+    fi
+done
+# gau and waybackurls do per-host URL/parameter discovery over the resolved
+# inventory. Subdomain discovery belongs to subdomain_enum; making an archive
+# tool re-derive subs duplicates that stage, multiplies runtime and invites IP
+# blocks. So they read hosts.txt and must NOT pass gau's --subs.
+for consumer in waybackurls gau; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
+        echo "FAIL: archive tool $consumer does not read hosts.txt (got: $consumer_in)"
+        fail=1
+    fi
+done
+gau_cmd="$(get_tool_info gau "command")"
+if [[ "$gau_cmd" == *'--subs'* ]]; then
+    echo "FAIL: gau passes --subs; subdomain discovery belongs to subdomain_enum"
+    fail=1
+fi
+# param_recon derives registrable roots itself (scripts/param_recon.sh collapses
+# to eTLD+1 for its waymore pass), so it takes the roots file.
+ppr_in="$(get_tool_info passive_param_recon "required_files")"
+if [[ "$ppr_in" != *'roots.txt'* ]]; then
+    echo "FAIL: passive_param_recon does not read roots.txt (got: $ppr_in)"
+    fail=1
+fi
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: crawlers and archive tools read hosts.txt; param_recon reads roots"
+fi
+
+# wild.txt must survive hosts.txt seeding untouched.
+wild_before="$(cat "$project_dir/wild.txt")"
+ensure_hosts_seed "$project_dir"
+if [[ "$(cat "$project_dir/wild.txt")" != "$wild_before" ]]; then
+    echo "FAIL: ensure_hosts_seed mutated the read-only wild.txt"
+    fail=1
+else
+    echo "PASS: wild.txt stays read-only while hosts.txt is seeded"
+fi
+if [[ ! -s "$project_dir/hosts.txt" ]]; then
+    echo "FAIL: ensure_hosts_seed left hosts.txt empty"
+    fail=1
+fi
+
+# ensure_roots_file must materialize .tmp_run/roots.txt from wild.txt for
+# profiles that skip subdomain_enum (urls, passive), so passive tools have a
+# roots list to read. It must not clobber a roots.txt already generated.
+rm -f "$project_dir/.tmp_run/roots.txt"
+ensure_roots_file "$project_dir"
+if [[ ! -s "$project_dir/.tmp_run/roots.txt" ]]; then
+    echo "FAIL: ensure_roots_file did not generate roots.txt from wild.txt"
+    fail=1
+else
+    echo "PASS: ensure_roots_file materializes roots.txt from wild.txt"
+fi
+printf 'sentinel-root.example\n' > "$project_dir/.tmp_run/roots.txt"
+ensure_roots_file "$project_dir"
+if [[ "$(cat "$project_dir/.tmp_run/roots.txt")" != 'sentinel-root.example' ]]; then
+    echo "FAIL: ensure_roots_file clobbered an existing roots.txt"
+    fail=1
+else
+    echo "PASS: ensure_roots_file preserves an existing roots.txt"
+fi
+rm -f "$project_dir/.tmp_run/roots.txt"
+
+# Every enum tool must consume the roots file, not a scalar {{DOMAIN}}.
+for enum_tool in subfinder crt_sh assetfinder amass; do
+    enum_cmd="$(get_tool_info "$enum_tool" "command")"
+    if [[ "$enum_cmd" != *'{{ROOTS_FILE}}'* ]]; then
+        echo "FAIL: $enum_tool does not consume {{ROOTS_FILE}}"
+        fail=1
+    fi
+    if [[ "$enum_cmd" == *'{{DOMAIN}}'* ]]; then
+        echo "FAIL: $enum_tool still consumes scalar {{DOMAIN}}"
+        fail=1
+    fi
+done
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: subdomain_enum tools all consume the roots file"
 fi
 
 if [[ "$fail" -ne 0 ]]; then

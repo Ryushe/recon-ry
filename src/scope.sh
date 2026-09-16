@@ -34,7 +34,7 @@ scope_filter_artifacts() {
     local project_dir="$1" directory file candidate evidence
     for directory in "$project_dir" "$project_dir/.tmp_run" "${CURRENT_HISTORY_DIR:-}"; do
         [[ -d "$directory" ]] || continue
-        for file in wild.txt urls.txt alive.txt params_raw.txt params.txt jsfiles.txt url_seed.txt; do
+        for file in wild.txt hosts.txt urls.txt alive.txt params_raw.txt params.txt jsfiles.txt url_seed.txt; do
             [[ -f "$directory/$file" ]] || continue
             candidate=$(mktemp "$directory/.scoped.XXXXXX") || return 1
             if ! scope_check filter --input "$directory/$file" --output "$candidate"; then

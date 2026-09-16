@@ -355,6 +355,7 @@ execute_tool() {
     command="${command//\{\{INPUT\}\}/$input_file}"
     command="${command//\{\{OUTPUT\}\}/$output_file}"
     command="${command//\{\{DOMAIN\}\}/$domain}"
+    command="${command//\{\{ROOTS_FILE\}\}/$PROJECT_DIR/.tmp_run/roots.txt}"
     command="${command//\{\{URL\}\}/$url}"
     command="${command//\{\{PROJECT_DIR\}\}/$PROJECT_DIR}"
     command="${command//\{\{RECON_DIR\}\}/$SCRIPT_DIR}"
@@ -408,6 +409,7 @@ execute_tool() {
         command="${command//\{\{INPUT\}\}/$input_file}"
         command="${command//\{\{OUTPUT\}\}/$output_file}"
         command="${command//\{\{DOMAIN\}\}/$domain}"
+        command="${command//\{\{ROOTS_FILE\}\}/$PROJECT_DIR/.tmp_run/roots.txt}"
         command="${command//\{\{URL\}\}/$url}"
         command="${command//\{\{PROJECT_DIR\}\}/$PROJECT_DIR}"
         command="${command//\{\{RECON_DIR\}\}/$SCRIPT_DIR}"
@@ -567,7 +569,7 @@ run_tool_with_anew() {
 
         if scope_enabled; then
             case "$(basename "$output_file")" in
-                wild.txt|urls.txt|alive.txt|params_raw.txt|params.txt|jsfiles.txt)
+                wild.txt|hosts.txt|urls.txt|alive.txt|params_raw.txt|params.txt|jsfiles.txt)
                     scope_check filter --input "$temp_output" --output "$temp_output" || return 2
                     ;;
             esac
