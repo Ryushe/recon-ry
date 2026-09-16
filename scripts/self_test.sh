@@ -493,6 +493,48 @@ if [[ "${fail:-0}" -eq 0 ]]; then
     echo "PASS: normalize_roots keeps every root and preserves multi-label eTLDs"
 fi
 
+# Enum tools write the host inventory; wild.txt is never a tool output.
+for enum_tool in subfinder crt_sh assetfinder amass; do
+    enum_out="$(get_tool_info "$enum_tool" "outputs")"
+    if [[ "$enum_out" != *'hosts.txt'* ]]; then
+        echo "FAIL: $enum_tool does not write hosts.txt (got: $enum_out)"
+        fail=1
+    fi
+    if [[ "$enum_out" == *'wild.txt'* ]]; then
+        echo "FAIL: $enum_tool still declares wild.txt as an output"
+        fail=1
+    fi
+done
+# URL discovery and passive param recon consume the inventory, not the roots.
+for consumer in katana hakrawler waybackurls gau passive_param_recon; do
+    consumer_in="$(get_tool_info "$consumer" "required_files")"
+    if [[ "$consumer_in" == *'wild.txt'* ]]; then
+        echo "FAIL: $consumer still reads wild.txt instead of hosts.txt"
+        fail=1
+    fi
+    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
+        echo "FAIL: $consumer does not read hosts.txt (got: $consumer_in)"
+        fail=1
+    fi
+done
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: enum writes hosts.txt and URL discovery reads it"
+fi
+
+# wild.txt must survive hosts.txt seeding untouched.
+wild_before="$(cat "$project_dir/wild.txt")"
+ensure_hosts_seed "$project_dir"
+if [[ "$(cat "$project_dir/wild.txt")" != "$wild_before" ]]; then
+    echo "FAIL: ensure_hosts_seed mutated the read-only wild.txt"
+    fail=1
+else
+    echo "PASS: wild.txt stays read-only while hosts.txt is seeded"
+fi
+if [[ ! -s "$project_dir/hosts.txt" ]]; then
+    echo "FAIL: ensure_hosts_seed left hosts.txt empty"
+    fail=1
+fi
+
 # Every enum tool must consume the roots file, not a scalar {{DOMAIN}}.
 for enum_tool in subfinder crt_sh assetfinder amass; do
     enum_cmd="$(get_tool_info "$enum_tool" "command")"

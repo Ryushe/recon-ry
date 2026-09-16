@@ -569,7 +569,7 @@ run_tool_with_anew() {
 
         if scope_enabled; then
             case "$(basename "$output_file")" in
-                wild.txt|urls.txt|alive.txt|params_raw.txt|params.txt|jsfiles.txt)
+                wild.txt|hosts.txt|urls.txt|alive.txt|params_raw.txt|params.txt|jsfiles.txt)
                     scope_check filter --input "$temp_output" --output "$temp_output" || return 2
                     ;;
             esac

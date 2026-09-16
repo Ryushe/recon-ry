@@ -142,6 +142,7 @@ Run help:
 Notes:
 - Either `--project` or `--url` must be provided.
 - `wild.txt` and `urls.txt` are treated as read-only inputs during recon runs.
+- `hosts.txt` is the writable host inventory: scope roots plus every subdomain found by `subdomain_enum`. URL discovery reads it.
 - In project mode, results and deltas are saved under date-based history directories.
 - Auth is opt-in. It is only applied to active HTTP-capable tools: katana, httpx, HTTP fingerprinting, param_recon's Katana path, ffuf, and nuclei.
 - Passive recon, DNS/IP enrichment, naabu, dorking, and local filesystem secret scanning stay unauthenticated.
@@ -202,6 +203,7 @@ Root recon files are cumulative. History files are per-run deltas.
 ~/bounties/example/
 ├── urls.txt
 ├── wild.txt
+├── hosts.txt
 ├── alive.txt
 ├── params_raw.txt
 ├── params.txt
@@ -379,7 +381,7 @@ Missing config files are restored from `config/defaults/` when possible.
 
 ## Recon Pipeline
 
-1. **Subdomain Enumeration** → discoveries flow to `urls.txt` (`wild.txt` is a read-only roots input)
+1. **Subdomain Enumeration** → `hosts.txt` (`wild.txt` is a read-only roots input)
    - subfinder, crt.sh, assetfinder, amass
 
 2. **URL Discovery** → `urls.txt`
@@ -414,6 +416,7 @@ Missing config files are restored from `config/defaults/` when possible.
 ### Output Files
 
 - `wild.txt` - Root / wildcard-base domains; read-only input that seeds subdomain enumeration
+- `hosts.txt` - Host inventory: scope roots plus discovered subdomains; input for URL discovery
 - `urls.txt` - All URLs (subdomains + discovered URLs)
 - `alive.txt` - Live hosts (filtered by httpx)
 - `ips.txt` - Unique IPs extracted from the URL corpus

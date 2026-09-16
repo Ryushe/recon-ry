@@ -17,6 +17,29 @@ dir_has_contents() {
 # trailing '.'. Deliberately does NOT reduce to eTLD+1: wild.txt already holds
 # registrable roots / wildcard bases, and multi-label eTLDs such as '.com.br'
 # make naive label-trimming wrong (aquiris.com.br -> com.br).
+# hosts.txt is the writable host inventory: scope roots plus every subdomain
+# discovered by subdomain_enum. wild.txt stays a read-only roots input. Seed the
+# inventory from the roots so url_discovery still covers the roots themselves on
+# a fresh project, or when subdomain_enum is disabled for the selected profile.
+ensure_hosts_seed() {
+    local project_dir="$1"
+    local roots_file="${2:-}"
+
+    [[ -f "$project_dir/hosts.txt" ]] || touch "$project_dir/hosts.txt"
+    if [[ -n "$roots_file" && -s "$roots_file" ]]; then
+        merge_with_anew "$roots_file" "$project_dir/hosts.txt"
+        return 0
+    fi
+    if [[ ! -s "$project_dir/hosts.txt" && -s "$project_dir/wild.txt" ]]; then
+        local seeded
+        seeded="$(mktemp)"
+        normalize_roots "$project_dir/wild.txt" > "$seeded"
+        merge_with_anew "$seeded" "$project_dir/hosts.txt"
+        rm -f "$seeded"
+        log_debug "Seeded hosts.txt from wild.txt roots"
+    fi
+}
+
 normalize_roots() {
     local file="$1"
     sed -e 's/#.*$//' \
@@ -205,14 +228,20 @@ execute_stage() {
         # Keep $domain populated for logging and any {{DOMAIN}} fallback.
         domain="$(head -n 1 "$temp_dir/roots.txt")"
         log_info "Subdomain enum roots: $(wc -l < "$temp_dir/roots.txt") from wild.txt"
+        ensure_hosts_seed "$project_dir" "$temp_dir/roots.txt"
     fi
+
+    # Any stage consuming the host inventory needs it populated even when
+    # subdomain_enum did not run in this profile.
+    ensure_hosts_seed "$project_dir"
 
     # Passive archive profiles can run from a URL/domain seed without requiring
     # a prior live stage or a pre-existing wild.txt.
     if [[ "$stage" == "passive_url_discovery" || "$stage" == "passive_param_discovery" ]]; then
-        if [[ ! -s "$project_dir/wild.txt" && ! -s "$temp_dir/wild.txt" && -n "$domain" ]]; then
+        if [[ ! -s "$project_dir/hosts.txt" && ! -s "$project_dir/wild.txt" && -n "$domain" ]]; then
             mkdir -p "$temp_dir"
             printf '%s\n' "$domain" > "$temp_dir/wild.txt"
+            printf '%s\n' "$domain" >> "$project_dir/hosts.txt"
             log_info "Passive seed domain: $domain"
         fi
     fi

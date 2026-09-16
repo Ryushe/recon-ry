@@ -210,6 +210,9 @@ create_global_urls() {
     if [[ -f "$project_dir/wild.txt" && -s "$project_dir/wild.txt" ]]; then
         merge_with_anew "$project_dir/wild.txt" "$global_urls"
     fi
+    if [[ -f "$project_dir/hosts.txt" && -s "$project_dir/hosts.txt" ]]; then
+        merge_with_anew "$project_dir/hosts.txt" "$global_urls"
+    fi
     if [[ -f "$temp_wild" && -s "$temp_wild" ]]; then
         merge_with_anew "$temp_wild" "$global_urls"
     fi
@@ -231,7 +234,7 @@ init_project_dir() {
     fi
 
     # Create empty files if they don't exist
-    for file in urls.txt wild.txt alive.txt params.txt; do
+    for file in urls.txt wild.txt hosts.txt alive.txt params.txt; do
         if [[ ! -f "$project_dir/$file" ]]; then
             touch "$project_dir/$file"
             log_debug "Created empty $file"
@@ -243,7 +246,7 @@ init_project_dir() {
 clean_empty_files() {
     local project_dir="$1"
 
-    for file in wild.txt urls.txt alive.txt params.txt secrets.txt dirs.txt params_raw.txt jsfiles.txt ips.txt hosts.jsonl httpx_ip_raw.txt naabu.jsonl ports.txt httpx.jsonl waf_hosts.txt unprotected_hosts.txt review_queue.jsonl; do
+    for file in wild.txt hosts.txt urls.txt alive.txt params.txt secrets.txt dirs.txt params_raw.txt jsfiles.txt ips.txt hosts.jsonl httpx_ip_raw.txt naabu.jsonl ports.txt httpx.jsonl waf_hosts.txt unprotected_hosts.txt review_queue.jsonl; do
         if [[ -f "$project_dir/$file" && ! -s "$project_dir/$file" ]]; then
             rm -f "$project_dir/$file"
             log_debug "Removed empty file: $file"

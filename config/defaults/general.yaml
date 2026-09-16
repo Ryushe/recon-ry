@@ -201,33 +201,33 @@ tools:
     type: binary  # Requires binary installation
     command: "subfinder -dL {{ROOTS_FILE}} -all -silent -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
 
   crt_sh:
     type: script
     command: "{{RECON_DIR}}/scripts/crt_sh.sh -f {{ROOTS_FILE}} {{OUTPUT}}"
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
 
   assetfinder:
     type: binary
     command: 'while IFS= read -r d; do [ -n "$d" ] && assetfinder --subs-only "$d"; done < {{ROOTS_FILE}}'
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
     note: "assetfinder does not have native rate limiting"
 
   amass:
     type: binary
     command: 'while IFS= read -r d; do [ -n "$d" ] && amass enum -passive -d "$d" -rf {{RATE_LIMIT}} -silent; done < {{ROOTS_FILE}}'
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
 
   # URL Discovery
   katana:
     type: binary
     auth_supported: true
     command: "katana -list {{INPUT}} -d 3 -silent -jc -kf all -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
-    required_files: [wild.txt]
+    required_files: [hosts.txt]
     outputs: [urls.txt]
 
   exact_katana:
@@ -240,21 +240,21 @@ tools:
   hakrawler:
     type: binary
     command: "cat {{INPUT}} | hakrawler -d 3 -plain > {{OUTPUT}}"
-    required_files: [wild.txt]
+    required_files: [hosts.txt]
     outputs: [urls.txt]
     note: "hakrawler does not have native rate limiting"
 
   waybackurls:
     type: binary
     command: "cat {{INPUT}} | waybackurls > {{OUTPUT}}"
-    required_files: [wild.txt]
+    required_files: [hosts.txt]
     outputs: [urls.txt]
     note: "waybackurls does not have native rate limiting"
 
   gau:
     type: binary
     command: "cat {{INPUT}} | gau --threads 1 --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
-    required_files: [wild.txt]
+    required_files: [hosts.txt]
     outputs: [urls.txt]
     note: "gau does not have native rate limiting"
 
@@ -325,7 +325,7 @@ tools:
   passive_param_recon:
     type: script
     command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --passive-only && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
-    required_files: [wild.txt]
+    required_files: [hosts.txt]
     outputs: [params_raw.txt]
 
   gau_params:
