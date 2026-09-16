@@ -247,14 +247,14 @@ tools:
   waybackurls:
     type: binary
     command: "cat {{INPUT}} | waybackurls > {{OUTPUT}}"
-    required_files: [roots.txt]
+    required_files: [hosts.txt]
     outputs: [urls.txt]
     note: "waybackurls does not have native rate limiting"
 
   gau:
     type: binary
-    command: "cat {{INPUT}} | gau --threads 1 --subs --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
-    required_files: [roots.txt]
+    command: "cat {{INPUT}} | gau --threads 1 --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
+    required_files: [hosts.txt]
     outputs: [urls.txt]
     note: "gau does not have native rate limiting"
 

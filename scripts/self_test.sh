@@ -533,36 +533,31 @@ for consumer in katana hakrawler; do
         fail=1
     fi
 done
-# Passive archive tools query the roots and expand subdomains themselves; feeding
-# them the full host inventory is wasteful, and switching them to roots without
-# subdomain coverage would silently regress (gau drops subs unless --subs is set,
-# empirically verified: `echo hc2tooling.com | gau` returns 0 URLs, `--subs`
-# returns its subdomains).
-for consumer in waybackurls gau passive_param_recon; do
+# gau and waybackurls do per-host URL/parameter discovery over the resolved
+# inventory. Subdomain discovery belongs to subdomain_enum; making an archive
+# tool re-derive subs duplicates that stage, multiplies runtime and invites IP
+# blocks. So they read hosts.txt and must NOT pass gau's --subs.
+for consumer in waybackurls gau; do
     consumer_in="$(get_tool_info "$consumer" "required_files")"
-    if [[ "$consumer_in" != *'roots.txt'* ]]; then
-        echo "FAIL: passive tool $consumer does not read roots.txt (got: $consumer_in)"
-        fail=1
-    fi
-    if [[ "$consumer_in" == *'hosts.txt'* ]]; then
-        echo "FAIL: passive tool $consumer reads hosts.txt; should query roots"
+    if [[ "$consumer_in" != *'hosts.txt'* ]]; then
+        echo "FAIL: archive tool $consumer does not read hosts.txt (got: $consumer_in)"
         fail=1
     fi
 done
-# gau must pass --subs so root-only input still covers subdomains.
 gau_cmd="$(get_tool_info gau "command")"
-if [[ "$gau_cmd" != *'--subs'* ]]; then
-    echo "FAIL: gau reads roots without --subs (silent subdomain-coverage regression)"
+if [[ "$gau_cmd" == *'--subs'* ]]; then
+    echo "FAIL: gau passes --subs; subdomain discovery belongs to subdomain_enum"
     fail=1
 fi
-# waybackurls includes subdomains by default (no --no-subs), so no flag needed.
-wb_cmd="$(get_tool_info waybackurls "command")"
-if [[ "$wb_cmd" == *'-no-subs'* ]]; then
-    echo "FAIL: waybackurls passes -no-subs, dropping subdomain coverage"
+# param_recon derives registrable roots itself (scripts/param_recon.sh collapses
+# to eTLD+1 for its waymore pass), so it takes the roots file.
+ppr_in="$(get_tool_info passive_param_recon "required_files")"
+if [[ "$ppr_in" != *'roots.txt'* ]]; then
+    echo "FAIL: passive_param_recon does not read roots.txt (got: $ppr_in)"
     fail=1
 fi
 if [[ "${fail:-0}" -eq 0 ]]; then
-    echo "PASS: active crawlers read hosts.txt; passive tools read roots (+gau --subs)"
+    echo "PASS: crawlers and archive tools read hosts.txt; param_recon reads roots"
 fi
 
 # wild.txt must survive hosts.txt seeding untouched.
