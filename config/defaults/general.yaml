@@ -199,26 +199,26 @@ tools:
   # Subdomain Enumeration
   subfinder:
     type: binary  # Requires binary installation
-    command: "subfinder -d {{DOMAIN}} -all -silent -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
+    command: "subfinder -dL {{ROOTS_FILE}} -all -silent -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
     required_files: []
     outputs: [wild.txt]
 
   crt_sh:
     type: script
-    command: "{{RECON_DIR}}/scripts/crt_sh.sh {{DOMAIN}} {{OUTPUT}} {{PROJECT_DIR}}/urls.txt"
+    command: "{{RECON_DIR}}/scripts/crt_sh.sh -f {{ROOTS_FILE}} {{OUTPUT}}"
     required_files: []
     outputs: [wild.txt]
 
   assetfinder:
     type: binary
-    command: "assetfinder --subs-only {{DOMAIN}}"
+    command: 'while IFS= read -r d; do [ -n "$d" ] && assetfinder --subs-only "$d"; done < {{ROOTS_FILE}}'
     required_files: []
     outputs: [wild.txt]
     note: "assetfinder does not have native rate limiting"
 
   amass:
     type: binary
-    command: "amass enum -passive -d {{DOMAIN}} -rf {{RATE_LIMIT}} -silent"
+    command: 'while IFS= read -r d; do [ -n "$d" ] && amass enum -passive -d "$d" -rf {{RATE_LIMIT}} -silent; done < {{ROOTS_FILE}}'
     required_files: []
     outputs: [wild.txt]
 

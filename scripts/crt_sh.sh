@@ -6,12 +6,6 @@
 # unique hostname extracted from it (recursive enumeration).
 set -euo pipefail
 
-DOMAIN="${1:?Usage: crt_sh.sh <domain> <output_file> [urls_file]}"
-OUTPUT="${2:?Usage: crt_sh.sh <domain> <output_file> [urls_file]}"
-URLS_FILE="${3:-}"
-
-# Ensure the output file exists before we start appending to it
-touch "${OUTPUT}"
 
 append_unique() {
     local output_file="$1"
@@ -48,6 +42,26 @@ query_crt_sh() {
 
     echo "${hosts}" | append_unique "${OUTPUT}"
 }
+
+# -f mode: query crt.sh for every root in a domains file. Used by the
+# subdomain_enum stage, which now enumerates all roots rather than one.
+if [[ "${1:-}" == "-f" ]]; then
+    DOMAINS_FILE="${2:?Usage: crt_sh.sh -f <domains_file> <output_file>}"
+    OUTPUT="${3:?Usage: crt_sh.sh -f <domains_file> <output_file>}"
+    touch "${OUTPUT}"
+    while IFS= read -r root; do
+        root="$(printf '%s' "${root}" | sed 's|https\?://||; s|/.*||; s|:.*||')"
+        [[ -z "${root}" ]] && continue
+        query_crt_sh "${root}"
+    done < "${DOMAINS_FILE}"
+    exit 0
+fi
+
+# Positional mode (back-compat): crt_sh.sh <domain> <output_file> [urls_file]
+DOMAIN="${1:?Usage: crt_sh.sh <domain> <output_file> [urls_file] | -f <domains_file> <output_file>}"
+OUTPUT="${2:?Usage: crt_sh.sh <domain> <output_file> [urls_file] | -f <domains_file> <output_file>}"
+URLS_FILE="${3:-}"
+touch "${OUTPUT}"
 
 # Query for the root domain first
 query_crt_sh "${DOMAIN}"

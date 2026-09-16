@@ -12,6 +12,25 @@ dir_has_contents() {
     [[ -d "$dir_path" ]] && find "$dir_path" -mindepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
+# Normalize a hosts/roots file into unique, lowercased base hostnames. Strips
+# comments, scheme, userinfo, path/query/fragment, port, leading '*.' and any
+# trailing '.'. Deliberately does NOT reduce to eTLD+1: wild.txt already holds
+# registrable roots / wildcard bases, and multi-label eTLDs such as '.com.br'
+# make naive label-trimming wrong (aquiris.com.br -> com.br).
+normalize_roots() {
+    local file="$1"
+    sed -e 's/#.*$//' \
+        -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' \
+        -e 's/^[^/@]*@//' \
+        -e 's#[/?].*$##' \
+        -e 's/:[0-9]\+$//' \
+        -e 's/^\*\.//' \
+        -e 's/\.$//' \
+        "$file" \
+    | tr '[:upper:]' '[:lower:]' \
+    | awk '{gsub(/[ \t\r]+/,"")} NF && !seen[$0]++'
+}
+
 expand_eyewitness_store_template() {
     local template="$1"
     local project_dir="$2"
@@ -161,23 +180,31 @@ execute_stage() {
         return 0
     fi
 
-    # Special check for subdomain_enum: tools need a domain; infer from wild.txt if URL not provided
+    # subdomain_enum tools take a domain per invocation, and wild.txt is a
+    # read-only roots / wildcard-base input (see commit 65189ed). Enumerate
+    # EVERY root rather than line 1: wild.txt is sorted, so line 1 is the
+    # alphabetically smallest entry, not a registrable root. Roots are written
+    # to a run-local file the enum tools consume via {{ROOTS_FILE}}.
     if [[ "$stage" == "subdomain_enum" ]]; then
-        if [[ -z "$domain" ]]; then
-            if [[ -s "$project_dir/wild.txt" ]]; then
-                domain=$(head -n 1 "$project_dir/wild.txt" | sed -e 's|^https\?://||' -e 's|/.*||')
-                if [[ -n "$domain" ]]; then
-                    log_info "Subdomain enum domain inferred from wild.txt: $domain"
-                else
-                    log_warning "Stage subdomain_enum skipped: unable to infer domain from wild.txt"
-                    return 0
-                fi
-            else
-                log_warning "Stage subdomain_enum skipped: no URL provided and wild.txt not found"
-                log_info "Subdomain enumeration requires --url to be specified"
-                return 0
-            fi
+        mkdir -p "$temp_dir"
+        if [[ -n "$domain" ]]; then
+            printf '%s\n' "$domain" > "$temp_dir/roots.seed"
+            normalize_roots "$temp_dir/roots.seed" > "$temp_dir/roots.txt"
+            rm -f "$temp_dir/roots.seed"
+        elif [[ -s "$project_dir/wild.txt" ]]; then
+            normalize_roots "$project_dir/wild.txt" > "$temp_dir/roots.txt"
+        else
+            log_warning "Stage subdomain_enum skipped: no URL provided and wild.txt not found"
+            log_info "Subdomain enumeration requires --url or a seeded wild.txt"
+            return 0
         fi
+        if [[ ! -s "$temp_dir/roots.txt" ]]; then
+            log_warning "Stage subdomain_enum skipped: no usable roots after normalization"
+            return 0
+        fi
+        # Keep $domain populated for logging and any {{DOMAIN}} fallback.
+        domain="$(head -n 1 "$temp_dir/roots.txt")"
+        log_info "Subdomain enum roots: $(wc -l < "$temp_dir/roots.txt") from wild.txt"
     fi
 
     # Passive archive profiles can run from a URL/domain seed without requiring

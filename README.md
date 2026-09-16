@@ -379,7 +379,7 @@ Missing config files are restored from `config/defaults/` when possible.
 
 ## Recon Pipeline
 
-1. **Subdomain Enumeration** → `wild.txt`
+1. **Subdomain Enumeration** → discoveries flow to `urls.txt` (`wild.txt` is a read-only roots input)
    - subfinder, crt.sh, assetfinder, amass
 
 2. **URL Discovery** → `urls.txt`
@@ -413,7 +413,7 @@ Missing config files are restored from `config/defaults/` when possible.
 
 ### Output Files
 
-- `wild.txt` - Discovered subdomains
+- `wild.txt` - Root / wildcard-base domains; read-only input that seeds subdomain enumeration
 - `urls.txt` - All URLs (subdomains + discovered URLs)
 - `alive.txt` - Live hosts (filtered by httpx)
 - `ips.txt` - Unique IPs extracted from the URL corpus

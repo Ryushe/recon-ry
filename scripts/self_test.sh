@@ -455,6 +455,60 @@ else
     echo "PASS: EyeWitness artifact copy retries with shorter names"
 fi
 
+# --- subdomain_enum roots normalization -------------------------------------
+# Regression for the subdomain_enum false negative: wild.txt is sorted, so
+# `head -n 1` returned the alphabetically smallest entry (a deep leaf), and the
+# enum tools silently enumerated one non-root host. All roots must survive
+# normalization, and multi-label eTLDs must not be collapsed.
+roots_fixture="$project_dir/roots_fixture.txt"
+cat > "$roots_fixture" << 'EOF'
+2021-1.ap-northeast-2.devtools.example.com
+*.fortnite.example
+https://EXAMPLE.com/some/path
+aquiris.com.br
+example.com:8443
+3lateral.com.
+
+# comment line
+aquiris.com.br
+EOF
+
+roots_out="$(normalize_roots "$roots_fixture")"
+for expected in 'example.com' 'fortnite.example' 'aquiris.com.br' '3lateral.com' \
+                '2021-1.ap-northeast-2.devtools.example.com'; do
+    if ! grep -qx "$expected" <<< "$roots_out"; then
+        echo "FAIL: normalize_roots dropped $expected"
+        fail=1
+    fi
+done
+if grep -qx 'com.br' <<< "$roots_out"; then
+    echo "FAIL: normalize_roots collapsed a multi-label eTLD to com.br"
+    fail=1
+fi
+if [[ "$(wc -l <<< "$roots_out")" -ne 5 ]]; then
+    echo "FAIL: normalize_roots expected 5 unique roots, got $(wc -l <<< "$roots_out")"
+    fail=1
+fi
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: normalize_roots keeps every root and preserves multi-label eTLDs"
+fi
+
+# Every enum tool must consume the roots file, not a scalar {{DOMAIN}}.
+for enum_tool in subfinder crt_sh assetfinder amass; do
+    enum_cmd="$(get_tool_info "$enum_tool" "command")"
+    if [[ "$enum_cmd" != *'{{ROOTS_FILE}}'* ]]; then
+        echo "FAIL: $enum_tool does not consume {{ROOTS_FILE}}"
+        fail=1
+    fi
+    if [[ "$enum_cmd" == *'{{DOMAIN}}'* ]]; then
+        echo "FAIL: $enum_tool still consumes scalar {{DOMAIN}}"
+        fail=1
+    fi
+done
+if [[ "${fail:-0}" -eq 0 ]]; then
+    echo "PASS: subdomain_enum tools all consume the roots file"
+fi
+
 if [[ "$fail" -ne 0 ]]; then
     echo ""
     echo "Self-test FAILED"
