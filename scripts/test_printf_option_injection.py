@@ -67,19 +67,39 @@ class PrintfFormatTests(unittest.TestCase):
                 )
                 self.assertEqual(result.stdout, "-cs R -dr")
 
-    def test_param_recon_builds_a_nonempty_crawl_scope(self):
-        """The fixed call site must yield both -cs and -dr for a real scope."""
+    def test_param_recon_delegates_crawl_scope_to_shared_helper(self):
+        """param_recon.sh must reuse the one canonical crawl-scope builder.
+
+        The inline ``printf -v KATANA_SCOPE_ARGS`` copy was where the dash-format
+        bug lived; it is now deleted and param_recon delegates to
+        ``katana_crawl_args`` in src/scope.sh (the same builder url_discovery
+        uses), so the two call sites cannot drift again.
+        """
         source = (ROOT / "scripts" / "param_recon.sh").read_text(encoding="utf-8")
-        self.assertIn("KATANA_SCOPE_ARGS", source)
-        line = next(
-            l for l in source.splitlines() if "printf -v KATANA_SCOPE_ARGS" in l
-        ).strip()
-        result = subprocess.run(
-            ["bash", "-c", f'CRAWL_SCOPE="REGEX"; {line}; printf "%s" "$KATANA_SCOPE_ARGS"'],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.stdout, "-cs REGEX -dr", result.stderr)
+        self.assertIn("katana_crawl_args katana", source)
+        self.assertNotIn("printf -v KATANA_SCOPE_ARGS", source)
+
+    def test_shared_helper_builds_a_nonempty_crawl_scope(self):
+        """The canonical builder must yield -fs fqdn plus -cs/-dr for a scope."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            scope = Path(d) / "scope.txt"
+            scope.write_text("example.com\n")
+            inp = Path(d) / "alive.txt"
+            inp.write_text("https://example.com/a\n")
+            script = (
+                'set -o pipefail; '
+                f'SCRIPT_DIR={ROOT!s}; source "$SCRIPT_DIR/src/scope.sh"; '
+                f'RECON_RY_SCOPE_FILE={scope!s} katana_crawl_args katana {inp!s}'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script], capture_output=True, text=True
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("-fs fqdn", result.stdout)
+        self.assertIn("-cs ", result.stdout)
+        self.assertIn(" -dr", result.stdout)
 
 
 if __name__ == "__main__":

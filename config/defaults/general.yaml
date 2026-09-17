@@ -318,13 +318,13 @@ tools:
   param_recon:
     type: script
     auth_supported: true
-    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp{{AUTH_ARGS}} && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
+    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}}{{AUTH_ARGS}}"
     required_files: [alive.txt]
     outputs: [params_raw.txt]
 
   passive_param_recon:
     type: script
-    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --passive-only && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
+    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}} --passive-only"
     required_files: [roots.txt]
     outputs: [params_raw.txt]
 

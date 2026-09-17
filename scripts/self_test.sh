@@ -239,9 +239,21 @@ else
     echo "PASS: --header and legacy --auth-header are both accepted"
 fi
 
-param_command="$(get_tool_info param_recon command)"
-rendered_param_command="$(apply_auth_args_to_command "$param_command" "$param_auth_args")"
-if [[ "$rendered_param_command" == *"param_recon.sh"*"--auth-seed"*"&& cat"* && "$rendered_param_command" != *"&& cat"*"--auth-seed"* ]]; then
+# Validate the published param_recon contract in config/defaults/general.yaml.
+# The script hands the merged params to the caller via --emit {{OUTPUT}} instead
+# of a trailing "&& cat params_raw.txt > {{OUTPUT}}": under `timeout`, a
+# process-group SIGTERM kills the outer shell before that tail can run, so the
+# emit path (written from param_recon.sh's own trap) is what lets a partial run
+# survive. Auth args must still substitute into that same invocation.
+default_param_command="$(python3 - "$DEFAULT_CONFIG_DIR/general.yaml" <<'PY_DEFAULT'
+import sys, yaml
+print(yaml.safe_load(open(sys.argv[1]))["tools"]["param_recon"]["command"])
+PY_DEFAULT
+)"
+rendered_param_command="$(apply_auth_args_to_command "$default_param_command" "$param_auth_args")"
+if [[ "$default_param_command" == *"param_recon.sh"*"--emit {{OUTPUT}}"* \
+   && "$rendered_param_command" == *"--emit {{OUTPUT}}"*"--auth-seed"* \
+   && "$rendered_param_command" != *"&& cat"* ]]; then
     echo "PASS: param_recon auth args are inserted into the script invocation"
 else
     echo "FAIL: param_recon auth args were not inserted into the script invocation"

@@ -31,6 +31,16 @@ fi
 set -o pipefail
 RECON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Share the single canonical katana crawl-scope builder with url_discovery
+# (src/tools.sh → katana_crawl_args). This used to be re-derived inline below,
+# and the two copies drifted: a printf option-parsing bug lived only in this
+# copy, so for 16h the param_discovery crawler ran with no -cs/-dr. scope.sh is
+# function-only (no side effects at source time) and resolves its helpers via
+# SCRIPT_DIR, so point that at RECON_DIR. Standalone runs execute from the repo,
+# where src/scope.sh is always present alongside scripts/scope_filter.py.
+SCRIPT_DIR="$RECON_DIR"
+source "$RECON_DIR/src/scope.sh"
+
 # ─── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; MAGENTA='\033[0;35m'; BLUE='\033[0;34m'
@@ -39,6 +49,7 @@ NC='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 INPUT="alive.txt"
 OUTDIR="."
+EMIT_FILE=""
 RATE_OVERRIDE=""
 PASSIVE_ONLY=0
 ACTIVE_ONLY=0
@@ -63,6 +74,10 @@ Usage: $0 [options]
 
   -i  <file>    Input file of live URLs (default: alive.txt)
   -o  <dir>     Output directory (default: current dir)
+  --emit <file> Also mirror the merged params_raw.txt to <file> on completion
+                AND on SIGINT/SIGTERM, so a caller that wraps this script in
+                'timeout' still receives whatever phases finished. Optional;
+                standalone runs can omit it.
   -r  <num>     Rate limit in req/s — overrides rate_limit.conf (default: 5)
   -d  <depth>   Katana crawl depth (default: 5)
   --auth-seed <file>  Owner-only JSON auth seed for supported active HTTP tools
@@ -97,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -i) INPUT="$2"; shift 2 ;;
         -o) OUTDIR="$2"; shift 2 ;;
+        --emit) EMIT_FILE="$2"; shift 2 ;;
         -r) RATE_OVERRIDE="$2"; shift 2 ;;
         -d) KATANA_DEPTH="$2"; shift 2 ;;
         --auth-seed) AUTH_SEED_FILE="$2"; shift 2 ;;
@@ -257,11 +273,72 @@ SCRAPLING_TMP=$(mktemp /tmp/pr_scrapling.XXXXXX)
 SCRAPLING_SCRIPT=$(mktemp /tmp/pr_scrapling.XXXXXX.py)
 START_TIME=$(date +%s)
 
-cleanup() {
+# Phase output temps, in merge order. Kept separate from working temps
+# (DOMAINS_TMP/WAYMORE_DOMAINS_TMP/SCRAPLING_SCRIPT) so an interrupt merge only
+# ever concatenates real collector output.
+PHASE_TMPS=("$WB_TMP" "$WAYMORE_TMP" "$KATANA_TMP" "$XNLF_TMP" "$HAK_TMP" "$GOSPIDER_TMP" "$SCRAPLING_TMP")
+
+cleanup_temps() {
     rm -f "$DOMAINS_TMP" "$WAYMORE_DOMAINS_TMP" "$WB_TMP" "$WAYMORE_TMP" \
           "$KATANA_TMP" "$XNLF_TMP" "$HAK_TMP" "$GOSPIDER_TMP" "$SCRAPLING_TMP" "$SCRAPLING_SCRIPT"
 }
-trap cleanup EXIT INT TERM
+
+# Concatenate phase temps, dropping a trailing partial (non-newline-terminated)
+# line from each. A phase killed mid-write can leave a half-formed final line
+# (e.g. a truncated URL); a complete line always ends in "\n", so the only line
+# we can safely reject is a final one that lacks it. Fully-written temps pass
+# through untouched, so the completion path is byte-identical to a plain cat.
+_cat_complete_lines() {
+    local f
+    for f in "$@"; do
+        [[ -s "$f" ]] || continue
+        if [[ -n "$(tail -c1 "$f" 2>/dev/null)" ]]; then
+            head -n -1 "$f" 2>/dev/null   # last line has no newline -> partial, drop it
+        else
+            cat "$f" 2>/dev/null
+        fi
+    done
+}
+
+# Mirror the merged params_raw.txt to the caller-supplied --emit path. The
+# caller (recon-ry) wraps this script in `timeout`; on timeout the whole process
+# group gets SIGTERM, so a `&& cat params_raw.txt > OUT` appended after this
+# script never runs. Writing the emit file from inside our own trap is the only
+# way completed-phase output reaches the caller on an interrupt.
+emit_raw() {
+    [[ -n "$EMIT_FILE" ]] || return 0
+    cp "$RAW_OUT" "$EMIT_FILE" 2>/dev/null || true
+}
+
+# Guard so the interrupt path merges at most once even if INT and TERM both fire.
+INTERRUPT_MERGED=0
+interrupt_merge() {
+    [[ $INTERRUPT_MERGED -eq 1 ]] && return
+    INTERRUPT_MERGED=1
+    # Preserve whatever phases finished: merge their temps (truncation-safe)
+    # into RAW_OUT before cleanup deletes them, then hand the result to the
+    # caller via the emit file.
+    _cat_complete_lines "${PHASE_TMPS[@]}" | sort -u > "$RAW_OUT" 2>/dev/null || true
+    emit_raw
+}
+
+on_signal() {
+    local sig="$1"
+    interrupt_merge
+    cleanup_temps
+    trap - EXIT INT TERM
+    # Re-raise with conventional 128+signal status so the caller sees an
+    # interrupt, not a clean success.
+    case "$sig" in
+        INT)  exit 130 ;;
+        TERM) exit 143 ;;
+        *)    exit 1 ;;
+    esac
+}
+
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+trap cleanup_temps EXIT
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 echo ""
@@ -375,18 +452,11 @@ fi
 phase "katana (active crawler + JS parsing)"
 if [[ $USE_KATANA -eq 1 ]] && command -v katana &>/dev/null; then
     AUTH_ARGS=$(build_auth_args)
-    KATANA_SCOPE_ARGS=""
-    if [[ -n "${RECON_RY_SCOPE_FILE:-}${RECON_RY_EXACT_HOST:-}" ]]; then
-        CRAWL_SCOPE=$(python3 "$RECON_DIR/scripts/scope_filter.py" crawl-regex --input "$INPUT") || exit 2
-        # Build the format from '%s' rather than a literal leading '-': a format
-        # string starting with a dash is parsed by printf as options, which left
-        # KATANA_SCOPE_ARGS empty and silently dropped the crawl scope.
-        printf -v KATANA_SCOPE_ARGS '%s %q %s' '-cs' "$CRAWL_SCOPE" '-dr'
-        [[ -n "$KATANA_SCOPE_ARGS" ]] || {
-            echo -e "${RED}Error:${NC} failed to build katana crawl scope"; exit 2; }
-    fi
-    # Never relax an input hostname to its registrable domain.
-    eval "katana -silent -jc -fs fqdn -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
+    # Canonical crawl-scope builder shared with url_discovery (src/scope.sh).
+    # It emits `-fs fqdn` unconditionally (an input hostname is never relaxed to
+    # its registrable domain) plus `-cs <regex> -dr` when a scope is configured.
+    KATANA_SCOPE_ARGS=$(katana_crawl_args katana "$INPUT") || exit 2
+    eval "katana -silent -jc -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
         < "$INPUT" 2>/dev/null > "$KATANA_TMP"
     result "$(wc -l < "$KATANA_TMP" | tr -d ' ')" "katana"
 elif [[ $USE_KATANA -eq 1 ]]; then
@@ -508,6 +578,11 @@ fi
 phase "Merging all sources → params_raw.txt"
 cat "$WB_TMP" "$WAYMORE_TMP" "$KATANA_TMP" "$XNLF_TMP" "$HAK_TMP" "$GOSPIDER_TMP" "$SCRAPLING_TMP" \
     2>/dev/null | sort -u > "$RAW_OUT"
+# Full merge is written; mark the interrupt path spent so a signal arriving
+# during uro cannot re-run the partial merge, and hand the complete file to the
+# caller via --emit (replaces the old `&& cat params_raw.txt > OUT`).
+INTERRUPT_MERGED=1
+emit_raw
 RAW_COUNT=$(wc -l < "$RAW_OUT" | tr -d ' ')
 echo -e "          ${GREEN}✓${NC} ${BOLD}${RAW_COUNT}${NC} unique URLs combined"
 echo ""
