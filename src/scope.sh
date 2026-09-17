@@ -34,7 +34,14 @@ scope_filter_artifacts() {
     local project_dir="$1" directory file candidate evidence
     for directory in "$project_dir" "$project_dir/.tmp_run" "${CURRENT_HISTORY_DIR:-}"; do
         [[ -d "$directory" ]] || continue
-        for file in wild.txt hosts.txt urls.txt alive.txt params_raw.txt params.txt jsfiles.txt url_seed.txt; do
+        # wild.txt is deliberately absent: it is a read-only roots input holding
+        # wildcard bases with "*." stripped, derived from the scope itself and
+        # never written by a tool. Filtering it as if its entries were request
+        # targets deletes them, because "*.example.com" does not match the bare
+        # base "example.com" -- which would silently empty the roots list and
+        # reduce subdomain enumeration to whichever roots happen to also be
+        # declared as exact scope entries.
+        for file in hosts.txt urls.txt alive.txt params_raw.txt params.txt jsfiles.txt url_seed.txt; do
             [[ -f "$directory/$file" ]] || continue
             candidate=$(mktemp "$directory/.scoped.XXXXXX") || return 1
             if ! scope_check filter --input "$directory/$file" --output "$candidate"; then
