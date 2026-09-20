@@ -92,6 +92,8 @@ silently shadow the dedicated exact stages.
 - `scripts/test_defensive_boundaries.py`: offline matcher and shell-fixture regression tests.
 - `scripts/test_review_regressions.py`: independent-review regressions for CLI failure,
   parallel/verbose timeouts, failed evidence I/O, resumed chunks and cache/host parsing.
+- `scripts/test_artifact_contract.py`: offline host inventory presentation checks.
+- `scripts/test_param_recon_interrupt.py`: offline parameter merge shape, emit and interrupt persistence checks with stub collectors.
 - `scripts/self_test.sh`: existing history, auth and EyeWitness report regressions.
 
 The framework test suite requires its existing PyYAML dependency (`setup.sh`).

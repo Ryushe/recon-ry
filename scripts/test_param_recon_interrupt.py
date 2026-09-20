@@ -22,6 +22,7 @@ line and then hangs, and ``timeout`` fires mid-katana.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -89,6 +90,53 @@ class ParamReconInterruptTest(unittest.TestCase):
             stderr=subprocess.DEVNULL,
         )
         return proc.returncode
+
+    def test_merge_accepts_only_http_query_urls(self) -> None:
+        """Both publication paths reject noise without rewriting valid URLs."""
+        valid = [
+            "https://example.com/search?q=one%20two&x=1#part",
+            "http://example.com/?flag",
+            "HTTPS://example.com/?empty=",
+            "https://[2001:db8::1]:8443/?a=1",
+        ]
+        invalid = [
+            "example.com/?q=1", "/relative?q=1", "//example.com/?q=1",
+            "ftp://example.com/?q=1", "javascript:alert(1)?q=1",
+            "[info] https://example.com/?q=1", "https://example.com/no-query",
+            "https://example.com/empty?", "https://example.com/#fragment?q=1",
+            "https:///?q=1", "https://[broken/?q=1",
+            "https://example.com/a b?q=1", "",
+        ]
+        rows = valid + invalid + valid[:1]
+        self._stub("waybackurls", "cat >/dev/null\nprintf '%s\\n' " +
+                   " ".join(shlex.quote(row) for row in rows) + "\n")
+        # Never invoke an installed normalizer; verify its input instead.
+        self._stub("uro", 'cp "$2" "$4"\n')
+        for mode in ("complete", "TERM", "INT"):
+            with self.subTest(mode=mode):
+                self._stub("katana", "exit 0\n" if mode == "complete" else
+                           "printf 'https://example.com/?partial=1'\nsleep 120\n")
+                outdir = self.tmp / mode
+                emit = self.tmp / (mode + "-emit.txt")
+                env = dict(os.environ)
+                env["LC_ALL"] = "C"
+                for key in list(env):
+                    if key.startswith("RECON_RY_"):
+                        del env[key]
+                env["PATH"] = f"{self.bindir}{os.pathsep}{env['PATH']}"
+                command = ["bash", str(SCRIPT), "-i", str(self.tmp / "alive.txt"),
+                           "-o", str(outdir), "--emit", str(emit),
+                           "--no-waymore", "--no-xnlinkfinder"]
+                if mode != "complete":
+                    command = ["timeout", "--signal=" + mode, "2", *command]
+                proc = subprocess.run(command, cwd=self.tmp, env=env,
+                                      capture_output=True, text=True, timeout=15)
+                self.assertEqual(proc.returncode, 0 if mode == "complete" else 124,
+                                 proc.stderr)
+                self.assertEqual(emit.read_text().splitlines(), sorted(valid))
+                self.assertEqual((outdir / "params_raw.txt").read_bytes(), emit.read_bytes())
+                if mode == "complete":
+                    self.assertEqual((outdir / "params.txt").read_bytes(), emit.read_bytes())
 
     def test_emit_receives_partial_on_sigterm(self) -> None:
         """Interrupted run: --emit file holds the completed-phase URLs."""

@@ -18,7 +18,7 @@ tools:
     type: binary  # Requires binary installation
     command: "subfinder -d {{DOMAIN}} -all -silent -o {{OUTPUT}}"
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
 ```
 
 ```yaml
@@ -51,7 +51,7 @@ tools:
     type: inline  # Not a binary, just a command
     command: "curl -s 'https://crt.sh/?q=%25.{{DOMAIN}}&output=json' | jq -r '.[].name_value' | sed 's/*.//g' | sort -u"
     required_files: []
-    outputs: [wild.txt]
+    outputs: [hosts.txt]
 ```
 
 ```yaml
@@ -202,7 +202,7 @@ shodan_subs:
   enabled: true
   type: inline
   command: "curl -s 'https://api.shodan.io/dns/domain/{{DOMAIN}}?key=YOUR_API_KEY' | jq -r '.subdomains[]' | sed 's/$/{{DOMAIN}}/'"
-  outputs: [wild.txt]
+  outputs: [hosts.txt]
 ```
 
 ### GitHub Dorking

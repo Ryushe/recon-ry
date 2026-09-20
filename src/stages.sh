@@ -18,7 +18,8 @@ dir_has_contents() {
 # registrable roots / wildcard bases, and multi-label eTLDs such as '.com.br'
 # make naive label-trimming wrong (aquiris.com.br -> com.br).
 # hosts.txt is the writable host inventory: scope roots plus every subdomain
-# discovered by subdomain_enum. wild.txt stays a read-only roots input. Seed the
+# discovered by subdomain_enum. wild.txt is read-only to runs, but maintained by
+# agents/operators after verified wildcard scope changes. Seed the
 # inventory from the roots so url_discovery still covers the roots themselves on
 # a fresh project, or when subdomain_enum is disabled for the selected profile.
 ensure_hosts_seed() {
@@ -54,13 +55,11 @@ normalize_roots() {
     | awk '{gsub(/[ \t\r]+/,"")} NF && !seen[$0]++'
 }
 
-# Ensure $temp_dir/roots.txt exists for passive archive consumers.
+# Ensure $temp_dir/roots.txt exists for consumers that require roots.
 # subdomain_enum generates it directly (from --url or wild.txt); this covers
-# profiles that skip subdomain_enum (urls, passive, url-only) where waybackurls,
-# gau, and passive_param_recon still need a roots list to query. Passive archive
-# tools take a domain and expand subdomains themselves (waybackurls includes
-# subs by default; gau needs --subs), so they consume roots, not the resolved
-# host inventory. Never clobber a roots.txt an earlier step already produced.
+# profiles that skip subdomain_enum (urls, passive, url-only), notably for
+# passive_param_recon. waybackurls and gau consume hosts.txt instead.
+# Never clobber a roots.txt an earlier step already produced.
 ensure_roots_file() {
     local project_dir="$1"
     local temp_dir="$project_dir/.tmp_run"
@@ -713,7 +712,7 @@ run_recon_url_only() {
     # Output results to stdout
     echo ""
     echo "=== Results ==="
-    for file in urls.txt wild.txt alive.txt params.txt; do
+    for file in urls.txt wild.txt hosts.txt alive.txt params.txt; do
         if [[ -s "$temp_dir/$file" ]]; then
             echo ""
             echo "=== $file ==="
@@ -730,7 +729,7 @@ show_results_summary() {
     echo ""
     log_info "Results Summary:"
 
-    for file in wild.txt urls.txt alive.txt params.txt secrets.txt dirs.txt ips.txt hosts.jsonl httpx_ip_raw.txt naabu.jsonl ports.txt httpx.jsonl waf_hosts.txt unprotected_hosts.txt review_queue.jsonl; do
+    for file in wild.txt hosts.txt urls.txt alive.txt params.txt secrets.txt dirs.txt ips.txt hosts.jsonl httpx_ip_raw.txt naabu.jsonl ports.txt httpx.jsonl waf_hosts.txt unprotected_hosts.txt review_queue.jsonl; do
         if [[ -f "$project_dir/$file" ]]; then
             local count=$(wc -l < "$project_dir/$file" 2>/dev/null || echo 0)
             printf "  %-15s: %d entries\n" "$file" "$count"

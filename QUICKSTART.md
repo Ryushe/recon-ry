@@ -56,7 +56,7 @@ ls -la ~/bounties/example/eyewitness/history
 ```
 
 Expected key paths:
-- `wild.txt`, `urls.txt`, `alive.txt`, `params.txt`, `secrets.txt`
+- `wild.txt`, `urls.txt` (maintained inputs); `hosts.txt`, `alive.txt`, `params_raw.txt`, `params.txt`, `secrets.txt` (artifacts)
 - `dirs_status/*.txt` (ffuf results split by status code)
 - `history/<m-d-YYYY>/...` (run deltas)
 - `eyewitness/history/<m-d-YYYY>/{alive,params,custom_input}`

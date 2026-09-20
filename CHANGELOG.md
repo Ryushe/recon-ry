@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased — consolidated contributor draft
 
+- List `hosts.txt` in project and URL-only results, clarify maintained roots versus enumeration/liveness artifacts, and filter normal/interrupted parameter merges to HTTP(S) query URLs using offline regressions.
 - Preserve Hoster/local EyeWitness mounted storage, cached report/search work and exact-host/reduced profiles, with portable defaults and corrected asset links.
 - Preserve repeatable custom headers and the legacy alias, plus unlimited default/missing-config timeout behavior.
 - Add explicit scope-input and artifact gates, strict exclusions, exact crawler boundaries and explicit IP/CIDR authorization without DNS-derived permission.

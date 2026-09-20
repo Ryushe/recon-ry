@@ -100,7 +100,7 @@ Usage: $0 [options]
   --no-gospider        Skip gospider
 
 Output:
-  params_raw.txt   Combined raw URLs from all sources (sorted-unique)
+  params_raw.txt   HTTP(S) URLs with nonempty queries (sorted-unique)
   params.txt       Deduplicated + normalized via uro
 
 EOF
@@ -205,8 +205,8 @@ DOMAIN_COUNT=$(wc -l < "$DOMAINS_TMP" | tr -d ' ')
 URL_COUNT=$(wc -l < "$INPUT" | tr -d ' ')
 
 # waymore enumerates all subdomains itself — pass root domains only.
-# Strategy: derive wild.txt roots first (scope wildcard bases + discovered
-# subdomains all collapsed to eTLD+1). Then add urls.txt entries: bare
+# Strategy: derive roots from maintained wild.txt wildcard bases first, using
+# the legacy last-two-label collapse. Then add urls.txt entries: bare
 # hostnames whose eTLD+1 is already in wild roots are discovered subdomains
 # and get collapsed; bare hostnames NOT in wild roots are exact scope entries
 # (e.g. flo.uri.sh) and are kept verbatim. Full URL entries always collapse.
@@ -229,7 +229,7 @@ urls_f = os.path.join(proj, 'urls.txt')
 
 results = set()
 
-# Pass 1: wild.txt — always collapse to eTLD+1 (scope roots + discovered subs)
+# Pass 1: maintained wild.txt bases — legacy last-two-label collapse
 if os.path.exists(wild_f):
     for line in open(wild_f):
         h = host_of(line)
@@ -300,6 +300,26 @@ _cat_complete_lines() {
     done
 }
 
+# Artifact boundary only: keep absolute HTTP(S) URLs with a nonempty query.
+# Do not normalize values, resolve hosts, or turn rejected rows into new inputs.
+_filter_query_urls() {
+    python3 -c '
+import sys
+from urllib.parse import urlsplit
+
+for line in sys.stdin:
+    url = line.rstrip("\r\n")
+    if not url or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+        continue
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme.lower() in ("http", "https") and parsed.hostname and parsed.query:
+            print(url)
+    except ValueError:
+        continue
+'
+}
+
 # Mirror the merged params_raw.txt to the caller-supplied --emit path. The
 # caller (recon-ry) wraps this script in `timeout`; on timeout the whole process
 # group gets SIGTERM, so a `&& cat params_raw.txt > OUT` appended after this
@@ -318,7 +338,7 @@ interrupt_merge() {
     # Preserve whatever phases finished: merge their temps (truncation-safe)
     # into RAW_OUT before cleanup deletes them, then hand the result to the
     # caller via the emit file.
-    _cat_complete_lines "${PHASE_TMPS[@]}" | sort -u > "$RAW_OUT" 2>/dev/null || true
+    _cat_complete_lines "${PHASE_TMPS[@]}" | _filter_query_urls | sort -u > "$RAW_OUT" 2>/dev/null || true
     emit_raw
 }
 
@@ -577,7 +597,7 @@ fi
 # ─── Merge all → params_raw.txt ───────────────────────────────────────────────
 phase "Merging all sources → params_raw.txt"
 cat "$WB_TMP" "$WAYMORE_TMP" "$KATANA_TMP" "$XNLF_TMP" "$HAK_TMP" "$GOSPIDER_TMP" "$SCRAPLING_TMP" \
-    2>/dev/null | sort -u > "$RAW_OUT"
+    2>/dev/null | _filter_query_urls | sort -u > "$RAW_OUT"
 # Full merge is written; mark the interrupt path spent so a signal arriving
 # during uro cannot re-run the partial merge, and hand the complete file to the
 # caller via --emit (replaces the old `&& cat params_raw.txt > OUT`).

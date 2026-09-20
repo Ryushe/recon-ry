@@ -142,6 +142,8 @@ Run help:
 Notes:
 - Either `--project` or `--url` must be provided.
 - `wild.txt` and `urls.txt` are treated as read-only inputs during recon runs.
+- `wild.txt` is agent/operator-maintained authorized wildcard roots input, not globally immutable.
+  Agents may edit it after verified wildcard scope changes; automated discovery/output promotion must never populate it.
 - `hosts.txt` is the writable host inventory: scope roots plus every subdomain found by `subdomain_enum`.
   Crawlers (katana, hakrawler) and archive tools (waybackurls, gau) all read it — they do per-host URL and
   parameter discovery. Subdomain discovery belongs to `subdomain_enum`; do not make an archive tool re-derive
@@ -420,10 +422,10 @@ Missing config files are restored from `config/defaults/` when possible.
 
 ### Output Files
 
-- `wild.txt` - Root / wildcard-base domains; read-only input that seeds subdomain enumeration
-- `hosts.txt` - Host inventory: scope roots plus discovered subdomains; input for active crawlers (katana, hakrawler). Passive archive tools query roots directly.
-- `urls.txt` - All URLs (subdomains + discovered URLs)
-- `alive.txt` - Live hosts (filtered by httpx)
+- `wild.txt` - Authorized wildcard-base roots maintained by agents/operators; read-only to recon runs, never a discovery output
+- `hosts.txt` - Existing enumeration inventory: seeded roots plus subdomains from `subdomain_enum`, separate from liveness. Katana, hakrawler, waybackurls and gau consume this inventory; it is not a complete inventory of every host mentioned in URL artifacts.
+- `urls.txt` - Operator/agent-provided URL/host seed input; automated URL discovery is kept in run-local artifacts, not promoted here
+- `alive.txt` - HTTP(S) endpoints retained by httpx; not a replacement for the enumeration inventory and not a guarantee of current reachability
 - `ips.txt` - Unique IPs extracted from the URL corpus
 - `hosts.jsonl` - Host/IP metadata sidecar
 - `httpx_ip_raw.txt` - Raw httpx `-ip` output used for IP extraction when available
@@ -432,7 +434,8 @@ Missing config files are restored from `config/defaults/` when possible.
 - `httpx.jsonl` - HTTP fingerprinting JSON
 - `waf_hosts.txt` - Hosts with CDN/WAF/protection hints
 - `unprotected_hosts.txt` - Hosts without obvious CDN/WAF hints
-- `params.txt` - URLs with parameters
+- `params_raw.txt` - Sorted-unique absolute HTTP(S) URLs with a nonempty query; param_recon filters both normal and interrupted merges before `--emit`. Bare hosts, relative links, other schemes, log lines, empty queries and fragment-only queries are rejected. Query flags and empty values remain valid; accepted URLs are not rewritten.
+- `params.txt` - Parameter URLs normalized/deduplicated from `params_raw.txt` via uro
 - `dirs.txt` - Discovered directories
 - `secrets.txt` - Found secrets and sensitive data
 - `review_queue.jsonl` - Ranked targets and reasons for focused review

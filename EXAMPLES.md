@@ -13,7 +13,7 @@ PROJECT=~/bounties/hackerone
 Inspect results:
 
 ```bash
-wc -l "$PROJECT"/wild.txt "$PROJECT"/alive.txt "$PROJECT"/params.txt
+wc -l "$PROJECT"/wild.txt "$PROJECT"/hosts.txt "$PROJECT"/alive.txt "$PROJECT"/params.txt
 ls -la "$PROJECT"/history
 ls -la "$PROJECT"/dirs_status
 ```
