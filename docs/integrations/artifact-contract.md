@@ -4,7 +4,7 @@
 - Owner: parent task `t_3697fb9c`, board `bug-bounty-harness`.
 - Branch/worktree: `fix/artifact-contract`, `/home/ryushe/worktrees/recon-ry-artifact-contract`.
 - Fetched base and intended PR target: `origin/main` at `95d20a64e38dd9c4e1c7b481086455103900d182`.
-- Implementation checkpoint: pending local commit; this dossier travels with the implementation.
+- Implementation checkpoint: `bcce859b1469862e57a61b7efa8ee7610820bbd0` on `fix/artifact-contract`; subsequent handoff-only commit records this immutable checkpoint. Review both the checkpoint and current branch tip.
 - Integration route: parent-reviewed contributor/review branch targeting `origin/main`; no direct main merge, push, runtime activation or descendant propagation in this task.
 - Inspiration: explicit owner correction of the artifact contract; supersedes historical proposal directions that treated wild.txt as globally immutable or sought new discovery promotion. Durable contract lives in README.md, not this temporary dossier.
 
