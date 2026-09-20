@@ -1,6 +1,7 @@
 # Artifact contract — offline maintenance handoff
 
-- Status: implemented and locally tested; independent review pending (parent arranges it).
+- Status: independently accepted for bounded artifact-integrity publication; main integration remains pending.
+- Independent acceptance: reviewer checked full diff at `473f0eceab2fe586d6e43bf2f6204335483c45b5`, reran 38 unittest tests, self-test, shell syntax, in-memory Python compilation, and whitespace checks; no blocking findings. This supersedes the pending-review instructions below. Host completeness remains deferred as documented; publication is not full completion of the original inventory request.
 - Owner: parent task `t_3697fb9c`, board `bug-bounty-harness`.
 - Branch/worktree: `fix/artifact-contract`, `/home/ryushe/worktrees/recon-ry-artifact-contract`.
 - Fetched base and intended PR target: `origin/main` at `95d20a64e38dd9c4e1c7b481086455103900d182`.
