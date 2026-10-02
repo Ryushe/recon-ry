@@ -196,7 +196,7 @@ check_stage_dependencies() {
         for tool in $dep_tools; do
             local outputs=$(get_tool_info "$tool" "outputs")
             for output in $outputs; do
-                if [[ -s "$project_dir/$output" ]]; then
+                if [[ -s "$project_dir/$output" || -s "$project_dir/.tmp_run/$output" ]]; then
                     has_output=true
                     break 2
                 fi

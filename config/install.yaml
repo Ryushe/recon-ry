@@ -49,6 +49,12 @@ tools:
 
   # Binary tools (require installation)
 
+  dnsx:
+    install_method: go
+    install_command: "go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
+    update_check: "github:projectdiscovery/dnsx"
+    binary_name: dnsx
+
   subfinder:
     install_method: go
     install_command: "go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
