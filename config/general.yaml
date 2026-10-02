@@ -35,6 +35,7 @@ stages:
       - crt_sh
       - assetfinder
       - amass
+      - dns_bruteforce
 
   url_discovery:
     parallel: false
@@ -45,6 +46,7 @@ stages:
       - hakrawler
       - waybackurls
       - gau
+      - waymore_urls
 
   exact_url_discovery:
     parallel: false
@@ -246,10 +248,10 @@ tools:
 
   waybackurls:
     type: binary
-    command: "cat {{INPUT}} | waybackurls > {{OUTPUT}}"
+    command: "bash {{RECON_DIR}}/bin/cdx-archive-urls.sh {{INPUT}} {{OUTPUT}}"
     required_files: [hosts.txt]
     outputs: [urls.txt]
-    note: "waybackurls does not have native rate limiting"
+    note: "Uses bin/cdx-archive-urls.sh. Bare waybackurls emits partial/empty output under archive.org HTTP 429 and exits 0, so the stage logged a successful '0 new entries' indistinguishably from an empty archive. The wrapper retries with backoff and exits non-zero when every query fails."
 
   gau:
     type: binary
@@ -314,6 +316,20 @@ tools:
     note: "Uses incremental EyeWitness wrapper; requires Chromium/ChromeDriver and EyeWitness setup"
 
   # Parameter Discovery
+  dns_bruteforce:
+    type: binary
+    command: "bash {{RECON_DIR}}/bin/dns-bruteforce.sh {{ROOTS_FILE}} {{OUTPUT}} {{RATE_LIMIT}}"
+    required_files: []
+    outputs: [hosts.txt]
+    note: "dnsx subdomain bruteforce. Reads WILDCARD roots only ({{ROOTS_FILE}} = wild.txt); exact-host scope entries are never bruteforced. Uses dnsx -auto-wildcard to suppress wildcard-DNS false positives."
+
+  waymore_urls:
+    type: binary
+    command: "waymore -i {{DOMAIN}} -mode U -oU {{OUTPUT}}"
+    required_files: []
+    outputs: [urls.txt]
+    note: "Archive URL collection for url_discovery. CommonCrawl/URLScan/OTX keep working when web.archive.org rate-limits an egress. Separate from the param_recon waymore entry so parameter behaviour is unchanged."
+
   waymore:
     type: binary
     command: "waymore -i {{DOMAIN}} -mode U -oU {{OUTPUT}}"

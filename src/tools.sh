@@ -75,6 +75,9 @@ resolve_ffuf_wordlist() {
 
     candidates+=(
         "${PROJECT_DIR:-}/wordlists/dirs.txt"
+        "$script_dir/config/wordlists/dirs-highsignal.lst"
+        "/usr/share/wordlists/Seclists/Discovery/Web-Content/quickhits.txt"
+        "/usr/share/wordlists/Seclists/Discovery/Web-Content/common.txt"
         "$script_dir/config/wordlists/dirs.lst"
         "$HOME/wordlists/SecLists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt"
         "$HOME/wordlists/SecLists/Discovery/Web-Content/raft-small-directories.txt"

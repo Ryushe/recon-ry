@@ -7,13 +7,15 @@ tools:
   subfinder: true
   crt_sh: true
   assetfinder: true
-  amass: false
+  amass: true
+  dns_bruteforce: true
 
   # -- url_discovery ------------------------------------------------------------
   katana: false
   hakrawler: false
   waybackurls: true
   gau: true
+  waymore_urls: true
 
   # -- alive_check --------------------------------------------------------------
   httpx: true
