@@ -220,9 +220,10 @@ tools:
 
   amass:
     type: binary
-    command: 'while IFS= read -r d; do [ -n "$d" ] && amass enum -passive -d "$d" -rf {{RATE_LIMIT}} -silent; done < {{ROOTS_FILE}}'
+    command: "bash {{RECON_DIR}}/bin/amass-enum.sh {{ROOTS_FILE}} {{OUTPUT}} {{RATE_LIMIT}}"
     required_files: []
     outputs: [hosts.txt]
+    note: "Wrapper handles the v4/v5 split. v4 is one-shot; v5 is a client/engine architecture where bare `amass enum` hangs indefinitely with no output if no engine is reachable. The old inline command also passed `-rf <rate>`, but -rf is a resolver-FILE path in every version, and it never redirected to {{OUTPUT}} so results were discarded."
 
   # URL Discovery
   katana:
