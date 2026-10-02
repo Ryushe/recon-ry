@@ -7,7 +7,7 @@ tools:
   subfinder: true
   crt_sh: true
   assetfinder: true
-  amass: true
+  amass: false
   dns_bruteforce: true
 
   # -- url_discovery ------------------------------------------------------------
