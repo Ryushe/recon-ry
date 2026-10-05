@@ -206,8 +206,9 @@ else
 fi
 
 ffuf_wordlist="$(resolve_ffuf_wordlist "")"
-if [[ "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs.lst" && -s "$ffuf_wordlist" ]]; then
-    echo "PASS: ffuf resolves bundled fallback wordlist"
+if [[ ( "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs-highsignal.lst" \
+     || "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs.lst" ) && -s "$ffuf_wordlist" ]]; then
+    echo "PASS: ffuf resolves bundled fallback wordlist ($(basename "$ffuf_wordlist"))"
 else
     echo "FAIL: ffuf fallback wordlist did not resolve"
     fail=1
