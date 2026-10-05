@@ -109,6 +109,35 @@ else
     exit 1
 fi
 
+# Wordlist repositories are cloned by `./main.sh update` (updater.sh
+# update_wordlists), not by this script. Verify the declared paths exist,
+# because a tool command can reference a template directory that was never
+# cloned and the only symptom is that tool failing mid-run. nuclei's -t path is
+# exactly this case: without the clone, secret_scan fails with no earlier signal.
+echo ""
+echo -e "${BLUE}[*]${NC} Checking wordlist repositories..."
+missing_wordlists=0
+while IFS=$'\t' read -r wl_name wl_path; do
+    [[ -z "${wl_name:-}" ]] && continue
+    if [[ -d "$wl_path" ]]; then
+        echo -e "  ${GREEN}[✓]${NC} $wl_name ($wl_path)"
+    else
+        echo -e "  ${YELLOW}[!]${NC} $wl_name missing: $wl_path"
+        missing_wordlists=$((missing_wordlists + 1))
+    fi
+done < <(python3 -c "
+import yaml
+data = yaml.safe_load(open('config/install.yaml')) or {}
+for name, cfg in (data.get('wordlists') or {}).items():
+    print(name + chr(9) + (cfg or {}).get('path', ''))
+" 2>/dev/null)
+
+if [[ $missing_wordlists -gt 0 ]]; then
+    echo -e "  ${YELLOW}[!]${NC} $missing_wordlists wordlist repo(s) not cloned."
+    echo -e "      Tools referencing them will fail at runtime (e.g. nuclei -t)."
+    echo -e "      Run: ./main.sh update"
+fi
+
 echo ""
 echo -e "${GREEN}[✓]${NC} Setup complete!"
 echo ""

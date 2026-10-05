@@ -405,7 +405,7 @@ tools:
   nuclei:
     type: binary
     auth_supported: true
-    command: "nuclei -list {{INPUT}} -t {{RECON_DIR}}/wordlists/nuclei-templates/exposures/ -silent -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
+    command: "nuclei -list {{INPUT}} -t {{RECON_DIR}}/wordlists/nuclei-templates/http/exposures/ -t {{RECON_DIR}}/wordlists/nuclei-templates/network/exposures/ -silent -rl {{RATE_LIMIT}} -o {{OUTPUT}}"
     required_files: [urls.txt]
     outputs: [secrets.txt]
 
