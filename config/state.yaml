@@ -12,7 +12,7 @@ tools:
 
   # -- url_discovery ------------------------------------------------------------
   katana: true
-  hakrawler: true
+  hakrawler: false
   waybackurls: true
   gau: true
   waymore_urls: false
