@@ -179,13 +179,13 @@ tui_run_menu() {
 
         case "$key" in
             up)
-                ((TUI_SELECTED--))
+                TUI_SELECTED=$((TUI_SELECTED - 1))
                 if [[ $TUI_SELECTED -lt 0 ]]; then
                     TUI_SELECTED=$((${#TUI_ITEMS[@]} - 1))
                 fi
                 ;;
             down)
-                ((TUI_SELECTED++))
+                TUI_SELECTED=$((TUI_SELECTED + 1))
                 if [[ $TUI_SELECTED -ge ${#TUI_ITEMS[@]} ]]; then
                     TUI_SELECTED=0
                 fi
@@ -229,13 +229,13 @@ tui_run_list_menu() {
 
         case "$key" in
             up)
-                ((TUI_SELECTED--))
+                TUI_SELECTED=$((TUI_SELECTED - 1))
                 if [[ $TUI_SELECTED -lt 0 ]]; then
                     TUI_SELECTED=$((${#TUI_ITEMS[@]} - 1))
                 fi
                 ;;
             down)
-                ((TUI_SELECTED++))
+                TUI_SELECTED=$((TUI_SELECTED + 1))
                 if [[ $TUI_SELECTED -ge ${#TUI_ITEMS[@]} ]]; then
                     TUI_SELECTED=0
                 fi
@@ -370,7 +370,7 @@ tui_configure_parallel() {
                 if is_stage_enabled "$stage"; then
                     local state="${TUI_STATES[$i]}"
                     update_stage_parallel "$stage" "$state"
-                    ((i++))
+                    i=$((i + 1))
                 fi
             done
 
@@ -419,7 +419,7 @@ tui_create_profile() {
             if [[ "${TUI_STATES[$i]}" == "true" ]]; then
                 selected_stages+=("$stage")
             fi
-            ((i++))
+            i=$((i + 1))
         done
 
         if [[ ${#selected_stages[@]} -eq 0 ]]; then
