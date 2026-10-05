@@ -435,7 +435,7 @@ execute_stage() {
 
             if [[ -z "$params_input" && -z "$alive_input" ]]; then
                 log_debug "Tool $tool missing alive.txt and params.txt, skipping"
-                ((skipped_tools++))
+                skipped_tools=$((skipped_tools + 1))
             fi
             continue
         fi

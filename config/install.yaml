@@ -29,6 +29,18 @@ tools:
     install_command: "# Built-in command - no installation needed"
     binary_name: dork_scan
 
+  dns_bruteforce:
+    install_method: inline
+    install_command: "# Uses the dnsx binary via bin/dns-bruteforce.sh - no separate installation needed"
+    binary_name: dnsx
+    dependencies: [dnsx]
+
+  waymore_urls:
+    install_method: inline
+    install_command: "# Uses the waymore binary - no separate installation needed"
+    binary_name: waymore
+    dependencies: [waymore]
+
   gau_params:
     install_method: inline
     install_command: "# Uses gau binary - no separate installation needed"

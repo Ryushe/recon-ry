@@ -323,19 +323,19 @@ check_tool_status() {
         if [[ "$tool_type" == "inline" ]]; then
             if is_tool_installed "$tool" 2>/dev/null; then
                 echo -e "  ${GREEN}[✓]${NC} $tool ${CYAN}(inline)${NC}"
-                ((installed++))
-                ((inline++))
+                installed=$((installed + 1))
+                inline=$((inline + 1))
             else
                 echo -e "  ${YELLOW}[!]${NC} $tool ${CYAN}(inline - missing dependencies)${NC}"
-                ((missing++))
+                missing=$((missing + 1))
             fi
         else
             if is_tool_installed "$tool" 2>/dev/null; then
                 echo -e "  ${GREEN}[✓]${NC} $tool"
-                ((installed++))
+                installed=$((installed + 1))
             else
                 echo -e "  ${RED}[✗]${NC} $tool"
-                ((missing++))
+                missing=$((missing + 1))
             fi
         fi
     done
@@ -381,7 +381,18 @@ install_missing_tools() {
     echo ""
 
     # Prompt user for confirmation
-    read -p "Would you like to install all missing tools? (y/n): " -n 1 -r
+    # Without a TTY, `read` fails immediately, and under main.sh's `set -euo
+    # pipefail` that aborts the whole update before update_wordlists() runs. Skip
+    # the prompt instead of dying, so `./main.sh update` is usable from cron, a
+    # pipe, or an agent.
+    if [[ ! -t 0 ]]; then
+        log_warning "Non-interactive shell: skipping automatic install of missing tool(s)."
+        log_warning "Run ./main.sh update from a terminal to install them."
+        return 0
+    fi
+
+    REPLY=""
+    read -p "Would you like to install all missing tools? (y/n): " -n 1 -r || REPLY=""
     echo ""
     echo ""
 
@@ -401,9 +412,9 @@ install_missing_tools() {
 
     for tool in "${missing_tools[@]}"; do
         if install_tool "$tool"; then
-            ((installed++))
+            installed=$((installed + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
 
@@ -425,9 +436,9 @@ update_all_tools() {
     for tool in $all_tools; do
         if is_tool_installed "$tool"; then
             if update_tool "$tool"; then
-                ((updated++))
+                updated=$((updated + 1))
             else
-                ((failed++))
+                failed=$((failed + 1))
             fi
         fi
     done
