@@ -793,6 +793,10 @@ run_tools_parallel() {
     local tools=("$@")
     local pids=()
 
+    STAGE_TOOLS_TOTAL=${#tools[@]}
+    STAGE_TOOLS_FAILED=0
+    STAGE_TOOLS_FAILED_NAMES=""
+
     for tool in "${tools[@]}"; do
         # Parse tool with its parameters
         # Format: "tool:input:output:domain:url"
@@ -820,9 +824,11 @@ run_tools_parallel() {
             fi
             [[ $rc -eq 124 ]] && timed_out=true
             failed=$((failed + 1))
+            STAGE_TOOLS_FAILED_NAMES+="${STAGE_TOOLS_FAILED_NAMES:+ }$tool_name"
         fi
     done
 
+    STAGE_TOOLS_FAILED=$failed
     [[ "$timed_out" == "true" ]] && return 124
     [[ $failed -eq 0 ]]
 }
@@ -832,6 +838,13 @@ run_tools_sequential() {
     local tools=("$@")
     local failed=0
     local timed_out=false
+
+    # Per-stage outcome counters consumed by execute_stage. A stage must be able
+    # to tell "one tool failed" from "every tool failed"; the return code alone
+    # cannot express that.
+    STAGE_TOOLS_TOTAL=${#tools[@]}
+    STAGE_TOOLS_FAILED=0
+    STAGE_TOOLS_FAILED_NAMES=""
 
     for tool in "${tools[@]}"; do
         # Parse tool with its parameters
@@ -846,9 +859,11 @@ run_tools_sequential() {
             fi
             [[ $rc -eq 124 ]] && timed_out=true
             failed=$((failed + 1))
+            STAGE_TOOLS_FAILED_NAMES+="${STAGE_TOOLS_FAILED_NAMES:+ }$tool_name"
         fi
     done
 
+    STAGE_TOOLS_FAILED=$failed
     [[ "$timed_out" == "true" ]] && return 124
     [[ $failed -eq 0 ]]
 }

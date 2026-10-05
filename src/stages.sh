@@ -213,6 +213,29 @@ check_stage_dependencies() {
 }
 
 # Execute a stage
+# Decide a stage's status from its tools' outcomes.
+#
+# A stage fails only when EVERY runnable tool failed. Any single tool failure
+# used to become the stage's return status, so one broken tool marked the whole
+# stage failed even when its siblings had succeeded. Observed on
+# anduril_industries: waymore_urls failed and took url_discovery down with it
+# while katana, the cdx archive wrapper and gau had all produced output.
+#
+# Timeouts are counted as ordinary tool failures, so one slow tool does not
+# condemn the stage either. Interrupts are handled by the caller before this.
+# Extracted from execute_stage so the rule is unit-testable; see self_test.sh.
+resolve_stage_exit_code() {
+    local exit_code="$1"
+    local tools_total="$2"
+    local tools_failed="$3"
+
+    if [[ $exit_code -gt 0 && $tools_total -gt 0 && $tools_failed -gt 0 && $tools_failed -lt $tools_total ]]; then
+        echo 0
+        return 0
+    fi
+    echo "$exit_code"
+}
+
 execute_stage() {
     local stage="$1"
     local project_dir="$2"
@@ -440,10 +463,34 @@ execute_stage() {
         INTERRUPTED=true
         log_warning "Stage $stage interrupted"
         return 130
+    fi
+
+    # A stage fails only when EVERY runnable tool failed.
+    #
+    # Previously any single tool failure became the stage's return status, so one
+    # broken tool marked the whole stage failed even when its siblings had
+    # succeeded. Observed on anduril_industries: waymore_urls failed and took
+    # url_discovery down with it, while katana, the cdx archive wrapper and gau
+    # had all produced output. The run then reported a failed stage and a
+    # non-zero project status for what was really a partial success.
+    #
+    # Interrupts (130) still propagate immediately, above. Timeouts are counted
+    # as tool failures like any other, so a single slow tool no longer condemns
+    # the stage either.
+    local tools_total="${STAGE_TOOLS_TOTAL:-0}"
+    local tools_failed="${STAGE_TOOLS_FAILED:-0}"
+    local failed_names="${STAGE_TOOLS_FAILED_NAMES:-}"
+
+    local resolved_code
+    resolved_code="$(resolve_stage_exit_code "$exit_code" "$tools_total" "$tools_failed")"
+
+    if [[ $exit_code -gt 0 && $resolved_code -eq 0 ]]; then
+        log_warning "Stage $stage: ${tools_failed}/${tools_total} tools failed (${failed_names}); the rest succeeded, continuing"
+        exit_code=0
     elif [[ $exit_code -eq 124 ]]; then
         log_warning "Stage $stage incomplete: tool timeout; partial evidence retained"
     elif [[ $exit_code -gt 0 ]]; then
-        log_warning "Stage $stage incomplete: one or more tools failed"
+        log_warning "Stage $stage failed: all ${tools_total} tool(s) failed${failed_names:+ ($failed_names)}"
     else
         log_success "Stage $stage completed successfully"
     fi
