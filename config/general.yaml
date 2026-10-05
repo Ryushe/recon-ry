@@ -337,7 +337,7 @@ tools:
     command: "waymore -i {{DOMAIN}} -mode U -oU {{OUTPUT}}"
     required_files: []
     outputs: [params_raw.txt]
-    note: "Invoked per root domain inside param_recon.sh; listed here for tool-check visibility"
+    note: "Registry entry for tool-check/install visibility; not referenced by any stage. param_recon.sh no longer invokes waymore (--no-waymore) because waymore_urls covers archive collection once per root in url_discovery. passive_param_recon still uses it, since --passive-only profiles may not run url_discovery."
 
   xnlinkfinder:
     type: binary
@@ -356,7 +356,7 @@ tools:
   param_recon:
     type: script
     auth_supported: true
-    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}}{{AUTH_ARGS}}"
+    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}} --no-waymore{{AUTH_ARGS}}"
     required_files: [alive.txt]
     outputs: [params_raw.txt]
 
