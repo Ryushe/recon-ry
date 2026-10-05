@@ -7,15 +7,15 @@ tools:
   subfinder: true
   crt_sh: true
   assetfinder: true
-  amass: false
+  amass: true
   dns_bruteforce: true
 
   # -- url_discovery ------------------------------------------------------------
-  katana: false
+  katana: true
   hakrawler: false
   waybackurls: true
   gau: true
-  waymore_urls: true
+  waymore_urls: false
 
   # -- alive_check --------------------------------------------------------------
   httpx: true
@@ -34,18 +34,18 @@ tools:
 
   # -- secret_scan --------------------------------------------------------------
   nuclei: false
-  trufflehog: false
+  trufflehog: true
   secret_finder: true
 
   # -- eyewitness ---------------------------------------------------------------
-  eyewitness: true
+  eyewitness: false
 
   # -- dork (standalone) --------------------------------------------------------
   dork_scan: false
 
-  # -- legacy / unused ----------------------------------------------------------
+  # -- legacy / orphaned (defined but wired to no stage) ------------------------
   gospider: false
-  gau_params: false
+  gau_params: true
 
 stages:
   # Full profile run order
@@ -58,7 +58,7 @@ stages:
   passive_param_normalize: true
   dir_enum: true
   secret_scan: true
-  eyewitness: true
+  eyewitness: false
 
   # Standalone profiles
   dork: false

@@ -147,6 +147,7 @@ stages:
     description: "Parameter discovery"
     tools:
       - param_recon
+      - gau_params
       - uro
       - js_files
       - unclutter_jsfiles
@@ -259,7 +260,7 @@ tools:
     command: "cat {{INPUT}} | gau --threads 1 --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
     required_files: [hosts.txt]
     outputs: [urls.txt]
-    note: "gau does not have native rate limiting"
+    note: "Archive-derived parameters for param_discovery, from the alive list. Concurrency, timeout, retries and providers come from ~/.gau.toml; do not hardcode --threads here because a CLI flag overrides the config file. gau has no requests-per-second limiter, only --threads."
 
   # Alive Check
   httpx:
@@ -355,19 +356,19 @@ tools:
   param_recon:
     type: script
     auth_supported: true
-    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp{{AUTH_ARGS}} && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
+    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}}{{AUTH_ARGS}}"
     required_files: [alive.txt]
     outputs: [params_raw.txt]
 
   passive_param_recon:
     type: script
-    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --passive-only && cat {{PROJECT_DIR}}/.param_recon_tmp/params_raw.txt > {{OUTPUT}}"
+    command: "rm -rf {{PROJECT_DIR}}/.param_recon_tmp && bash {{RECON_DIR}}/scripts/param_recon.sh -i {{INPUT}} -o {{PROJECT_DIR}}/.param_recon_tmp --emit {{OUTPUT}} --passive-only"
     required_files: [roots.txt]
     outputs: [params_raw.txt]
 
   gau_params:
     type: inline # gau normal run will check install
-    command: "cat {{INPUT}} | gau --threads 1 > {{OUTPUT}}"
+    command: "cat {{INPUT}} | gau > {{OUTPUT}}"
     required_files: [alive.txt]
     outputs: [params_raw.txt]
     note: "gau does not have native rate limiting"

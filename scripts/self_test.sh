@@ -206,8 +206,9 @@ else
 fi
 
 ffuf_wordlist="$(resolve_ffuf_wordlist "")"
-if [[ "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs.lst" && -s "$ffuf_wordlist" ]]; then
-    echo "PASS: ffuf resolves bundled fallback wordlist"
+if [[ ( "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs-highsignal.lst" \
+     || "$ffuf_wordlist" == "$SCRIPT_DIR/config/wordlists/dirs.lst" ) && -s "$ffuf_wordlist" ]]; then
+    echo "PASS: ffuf resolves bundled fallback wordlist ($(basename "$ffuf_wordlist"))"
 else
     echo "FAIL: ffuf fallback wordlist did not resolve"
     fail=1
@@ -621,6 +622,71 @@ for enum_tool in subfinder crt_sh assetfinder amass; do
 done
 if [[ "${fail:-0}" -eq 0 ]]; then
     echo "PASS: subdomain_enum tools all consume the roots file"
+fi
+
+# --- stage outcome policy: one failing tool must not fail the whole stage -----
+# Table: exit_code total failed -> expected resolved status
+stage_policy_ok=1
+while read -r rc total failed expected label; do
+    [[ -z "${rc:-}" ]] && continue
+    got="$(resolve_stage_exit_code "$rc" "$total" "$failed")"
+    if [[ "$got" != "$expected" ]]; then
+        echo "FAIL: stage policy $label (rc=$rc ${failed}/${total}) -> $got, expected $expected"
+        stage_policy_ok=0
+        fail=1
+    fi
+done <<'TABLE'
+0 3 0 0 clean-run
+1 3 1 0 one-of-three-failed
+1 3 2 0 two-of-three-failed
+1 3 3 1 all-three-failed
+1 1 1 1 only-tool-failed
+124 2 1 0 one-of-two-timed-out
+124 2 2 124 both-timed-out
+1 0 0 1 no-counters-available
+TABLE
+if [[ $stage_policy_ok -eq 1 ]]; then
+    echo "PASS: stage fails only when every tool failed (8 cases)"
+fi
+
+# --- tool runner must report which tools failed, and how many ----------------
+# Stub the per-tool executor; this is the last test block, so the stub cannot
+# affect anything else.
+run_tool_with_anew() {
+    case "$1" in
+        selftest_bad*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+STAGE_TOOLS_TOTAL=0; STAGE_TOOLS_FAILED=0; STAGE_TOOLS_FAILED_NAMES=""
+seq_rc=0
+run_tools_sequential "selftest_good:i:o:d:u" "selftest_bad:i:o:d:u" || seq_rc=$?
+if [[ "$STAGE_TOOLS_TOTAL" == "2" && "$STAGE_TOOLS_FAILED" == "1" \
+      && "$STAGE_TOOLS_FAILED_NAMES" == "selftest_bad" && $seq_rc -ne 0 ]]; then
+    echo "PASS: sequential runner reports 1 of 2 failed and names the failing tool"
+else
+    echo "FAIL: sequential runner counters wrong (total=$STAGE_TOOLS_TOTAL failed=$STAGE_TOOLS_FAILED names='$STAGE_TOOLS_FAILED_NAMES' rc=$seq_rc)"
+    fail=1
+fi
+
+# That partial failure must resolve to a non-failed stage.
+if [[ "$(resolve_stage_exit_code "$seq_rc" "$STAGE_TOOLS_TOTAL" "$STAGE_TOOLS_FAILED")" == "0" ]]; then
+    echo "PASS: a stage with one failed and one successful tool is not marked failed"
+else
+    echo "FAIL: partial tool failure still fails the stage"
+    fail=1
+fi
+
+STAGE_TOOLS_TOTAL=0; STAGE_TOOLS_FAILED=0; STAGE_TOOLS_FAILED_NAMES=""
+all_rc=0
+run_tools_sequential "selftest_bad1:i:o:d:u" "selftest_bad2:i:o:d:u" || all_rc=$?
+if [[ "$STAGE_TOOLS_FAILED" == "2" && "$STAGE_TOOLS_TOTAL" == "2" \
+      && "$(resolve_stage_exit_code "$all_rc" 2 2)" != "0" ]]; then
+    echo "PASS: a stage whose every tool failed is still marked failed"
+else
+    echo "FAIL: all-tools-failed was not treated as a stage failure (failed=$STAGE_TOOLS_FAILED total=$STAGE_TOOLS_TOTAL rc=$all_rc)"
+    fail=1
 fi
 
 if [[ "$fail" -ne 0 ]]; then
