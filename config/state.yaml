@@ -15,7 +15,7 @@ tools:
   hakrawler: false
   waybackurls: true
   gau: true
-  waymore_urls: false
+  waymore_urls: true
 
   # -- alive_check --------------------------------------------------------------
   httpx: true

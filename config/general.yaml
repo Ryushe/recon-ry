@@ -327,10 +327,10 @@ tools:
 
   waymore_urls:
     type: binary
-    command: "waymore -i {{DOMAIN}} -mode U -oU {{OUTPUT}}"
+    command: "waymore -i {{DOMAIN}} -mode U -xwm -oU {{OUTPUT}}"
     required_files: []
     outputs: [urls.txt]
-    note: "Archive URL collection for url_discovery. CommonCrawl/URLScan/OTX keep working when web.archive.org rate-limits an egress. Separate from the param_recon waymore entry so parameter behaviour is unchanged."
+    note: "Archive URL collection for url_discovery via URLScan/CommonCrawl/OTX. -xwm excludes Wayback deliberately: bin/cdx-archive-urls.sh already covers archive.org with retries, and waymore defaults to -wrlr 3 which parks for 3 minutes on a Wayback rate limit before reaching the providers that work. Do NOT add -v: verbose mode prints the URLSCAN_API_KEY in plaintext, which would land in run logs. waymore also gates all stdout/stderr on sys.stdout.isatty(), so it is silent under a tool runner and writes no output file when a provider set returns nothing - absence of output is not evidence it ran wrong. Separate from the param_recon waymore entry so parameter behaviour is unchanged."
 
   waymore:
     type: binary
