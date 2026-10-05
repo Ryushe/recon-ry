@@ -147,6 +147,7 @@ stages:
     description: "Parameter discovery"
     tools:
       - param_recon
+      - gau_params
       - uro
       - js_files
       - unclutter_jsfiles
@@ -259,7 +260,7 @@ tools:
     command: "cat {{INPUT}} | gau --threads 1 --blacklist png,jpg,gif,jpeg,swf,woff,svg,pdf > {{OUTPUT}}"
     required_files: [hosts.txt]
     outputs: [urls.txt]
-    note: "gau does not have native rate limiting"
+    note: "Archive-derived parameters for param_discovery, from the alive list. Concurrency, timeout, retries and providers come from ~/.gau.toml; do not hardcode --threads here because a CLI flag overrides the config file. gau has no requests-per-second limiter, only --threads."
 
   # Alive Check
   httpx:
@@ -367,7 +368,7 @@ tools:
 
   gau_params:
     type: inline # gau normal run will check install
-    command: "cat {{INPUT}} | gau --threads 1 > {{OUTPUT}}"
+    command: "cat {{INPUT}} | gau > {{OUTPUT}}"
     required_files: [alive.txt]
     outputs: [params_raw.txt]
     note: "gau does not have native rate limiting"

@@ -43,9 +43,9 @@ tools:
   # -- dork (standalone) --------------------------------------------------------
   dork_scan: false
 
-  # -- legacy / unused ----------------------------------------------------------
+  # -- legacy / orphaned (defined but wired to no stage) ------------------------
   gospider: false
-  gau_params: false
+  gau_params: true
 
 stages:
   # Full profile run order
