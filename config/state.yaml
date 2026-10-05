@@ -32,7 +32,7 @@ tools:
   ffuf: true
 
   # -- secret_scan --------------------------------------------------------------
-  nuclei: false
+  nuclei: true
   trufflehog: true
   secret_finder: true
 
