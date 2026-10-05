@@ -23,8 +23,7 @@ tools:
   # -- param_discovery ----------------------------------------------------------
   param_recon: true
   passive_param_recon: true
-  waymore: true
-  xnlinkfinder: true
+  gau_params: true
   uro: true
   js_files: true
   unclutter_jsfiles: true
@@ -43,9 +42,14 @@ tools:
   # -- dork (standalone) --------------------------------------------------------
   dork_scan: false
 
-  # -- legacy / orphaned (defined but wired to no stage) ------------------------
+  # -- driven by scripts/param_recon.sh, NOT by the stage runner ----------------
+  # These are invoked inside param_recon.sh behind its own --no-<tool> flags, so
+  # they are absent from every stage's tools list and these toggles are NOT
+  # consulted. Changing them here has no effect; pass the script flags instead.
+  # Listed so the tools stay visible rather than looking uninstalled or dead.
+  waymore: true
+  xnlinkfinder: true
   gospider: false
-  gau_params: true
 
 stages:
   # Full profile run order
