@@ -7,8 +7,8 @@
 - **Base commit:** `a16578c7abb3a7b80470c273f720dd21845360f0` (fetched `origin/main`)
 - **Intended integration target:** `origin/main` / `main`, parent-controlled only
 - **Last updated:** 2026-10-15
-- **Latest immutable recovery checkpoint:** pending implementation commit
-- **Feature implementation commit(s):** pending
+- **Latest immutable recovery checkpoint:** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`
+- **Feature implementation commit(s):** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`
 - **Inspiration:** papercut PC-20260917-195548-b1701c3f; no closure authorized
 
 ## Intent and contract
@@ -31,8 +31,8 @@ Split authorized Katana seed lines into host groups whose shell-encoded crawl re
 ## Interruption / resume handoff
 
 - **Owning feature branch/ref:** `fix/katana-bounded-batches`
-- **Latest immutable recovery checkpoint:** pending implementation commit; see subsequent dossier-only commit for SHA
-- **Feature implementation commit(s):** pending
+- **Latest immutable recovery checkpoint:** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`; subsequent dossier-only handoff commit at branch tip.
+- **Feature implementation commit(s):** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`
 - **Exact resume point:** Review the diff and receipts, integrate only under parent authority; do not push or close papercut here.
 - **Working-tree state at handoff:** expected clean after commit.
 
