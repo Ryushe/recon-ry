@@ -5,6 +5,7 @@ import ipaddress
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 from urllib.parse import urlsplit
@@ -131,9 +132,49 @@ def crawl_regex(scope, source):
     return r"(?i)^https?://(?:" + "|".join(authorities) + r")(?::[0-9]+)?(?:[/?#]|$)"
 
 
+def crawl_batches(scope, source, directory, limit=32768):
+    """Partition authorized input lines by host; cap shell-encoded -cs bytes."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    groups = []
+    current = {}
+    # DNS/IP authority fragments cannot contain quotes; shlex.quote adds two
+    # single quotes around this regex. Count precisely without quadratic joins.
+    fixed = len(shlex.quote(r"(?i)^https?://(?:)(?::[0-9]+)?(?:[/?#]|$)"))
+    encoded_size = fixed
+    with Path(source).open(encoding="utf-8") as inp:
+        for raw in inp:
+            line = raw.strip()
+            if not scope.allows(line):
+                continue
+            host = host_of(line)
+            if host not in current:
+                fragment = re.escape("[" + host + "]" if ":" in host else host) + r"\.?"
+                added = len(fragment.encode("utf-8")) + bool(current)
+                if encoded_size + added > limit:
+                    if not current:
+                        raise ValueError("single crawler host exceeds encoded crawl-regex limit")
+                    groups.append(current)
+                    current = {}
+                    encoded_size = fixed
+                    added = len(fragment.encode("utf-8"))
+                encoded_size += added
+            current.setdefault(host, []).append(line)
+    if current:
+        groups.append(current)
+    if not groups:
+        raise ValueError("no authorized crawler input")
+    for index, group in enumerate(groups):
+        path = directory / f"batch-{index:05d}.input"
+        with path.open("w", encoding="utf-8") as out:
+            for lines in group.values():
+                out.write("\n".join(lines) + "\n")
+    return len(groups)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("action", choices=("validate", "filter", "check", "crawl-regex"))
+    p.add_argument("action", choices=("validate", "filter", "check", "crawl-regex", "crawl-batches"))
     p.add_argument("--scope-file", default=os.environ.get("RECON_RY_SCOPE_FILE", ""))
     p.add_argument("--out-scope-file", default=os.environ.get("RECON_RY_OUT_SCOPE_FILE", ""))
     p.add_argument("--exact-host", default=os.environ.get("RECON_RY_EXACT_HOST", ""))
@@ -158,6 +199,10 @@ def main():
             if not args.input:
                 p.error("crawl-regex needs --input")
             print(crawl_regex(scope, args.input))
+        elif args.action == "crawl-batches":
+            if not args.input or not args.output:
+                p.error("crawl-batches needs --input and --output")
+            crawl_batches(scope, args.input, args.output)
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"scope: {exc}", file=sys.stderr)
         return 2

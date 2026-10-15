@@ -354,9 +354,11 @@ execute_tool() {
     eyewitness_python="${eyewitness_python//\{\{RECON_DIR\}\}/$SCRIPT_DIR}"
     eyewitness_python="${eyewitness_python//\{\{SCRIPT_DIR\}\}/$SCRIPT_DIR}"
 
-    # Replace placeholders
-    command="${command//\{\{INPUT\}\}/$input_file}"
-    command="${command//\{\{OUTPUT\}\}/$output_file}"
+    # Leave the crawler's input/output slots for per-batch substitution.
+    if ! scope_enabled || [[ "$tool" != katana && "$tool" != exact_katana ]]; then
+        command="${command//\{\{INPUT\}\}/$input_file}"
+        command="${command//\{\{OUTPUT\}\}/$output_file}"
+    fi
     command="${command//\{\{DOMAIN\}\}/$domain}"
     command="${command//\{\{ROOTS_FILE\}\}/$PROJECT_DIR/.tmp_run/roots.txt}"
     command="${command//\{\{URL\}\}/$url}"
@@ -409,8 +411,10 @@ execute_tool() {
     payload_command=$(get_payload_command "$tool")
     if [[ -n "$payload_command" ]]; then
         command="$payload_command"
-        command="${command//\{\{INPUT\}\}/$input_file}"
-        command="${command//\{\{OUTPUT\}\}/$output_file}"
+        if ! scope_enabled || [[ "$tool" != katana && "$tool" != exact_katana ]]; then
+            command="${command//\{\{INPUT\}\}/$input_file}"
+            command="${command//\{\{OUTPUT\}\}/$output_file}"
+        fi
         command="${command//\{\{DOMAIN\}\}/$domain}"
         command="${command//\{\{ROOTS_FILE\}\}/$PROJECT_DIR/.tmp_run/roots.txt}"
         command="${command//\{\{URL\}\}/$url}"
@@ -440,9 +444,14 @@ execute_tool() {
 
     # Constrain crawler requests at source as well as filtering their results.
     local crawl_args
-    crawl_args=$(katana_crawl_args "$tool" "$input_file") || return 2
-    if [[ -n "$crawl_args" ]]; then
-        command="$command $crawl_args"
+    if scope_enabled && [[ "$tool" == katana || "$tool" == exact_katana ]]; then
+        # Batch planner owns -cs; never construct an all-host argument here.
+        :
+    else
+        crawl_args=$(katana_crawl_args "$tool" "$input_file") || return 2
+        if [[ -n "$crawl_args" ]]; then
+            command="$command $crawl_args"
+        fi
     fi
 
     local auth_args
@@ -452,6 +461,11 @@ execute_tool() {
         log_verbose "Auth enabled for $tool"
     elif auth_is_enabled && tool_supports_auth "$tool"; then
         log_warning "Auth requested but no usable auth material was available for $tool"
+    fi
+    if scope_enabled && [[ "$tool" == katana || "$tool" == exact_katana ]]; then
+        local batch_template="$command"
+        printf -v command 'SCRIPT_DIR=%q; source %q; katana_run_batches %q %q %q' \
+            "$SCRIPT_DIR" "$SCRIPT_DIR/src/scope.sh" "$batch_template" "$input_file" "$output_file"
     fi
 
     log_verbose "Running: $tool"
