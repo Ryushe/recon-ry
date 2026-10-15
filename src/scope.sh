@@ -34,11 +34,11 @@ katana_crawl_args() {
 # One invocation per regex-sized group, not per host; the caller's timeout
 # wraps the whole dispatch. The template contains {{INPUT}} and {{OUTPUT}}.
 katana_run_batches() (
-    local template="$1" source="$2" output="$3" directory batch args command rc=0 pending=0
+    local template="$1" source="$2" output="$3" directory batch args command rc=0 pending=0 input_q output_q
     directory=$(mktemp -d) || return 2
     # On an aggregate timeout, preserve complete lines from the active batch
     # as well as prior batches before cleaning up its temporary output.
-    trap 'if (( pending )); then cat "$directory/current.output" >> "$output"; fi; rm -rf "$directory"' EXIT
+    trap 'if (( pending )); then while IFS= read -r line; do printf "%s\n" "$line"; done < "$directory/current.output" >> "$output"; fi; rm -rf "$directory"' EXIT
     scope_check crawl-batches --input "$source" --output "$directory" || return 2
     if [[ "$template" != *'{{INPUT}}'* || "$template" != *'{{OUTPUT}}'* ]]; then
         printf 'katana batch command requires input and output placeholders\n' >&2
@@ -47,8 +47,10 @@ katana_run_batches() (
     : > "$output" || return 2
     for batch in "$directory"/batch-*.input; do
         args=$(katana_crawl_args katana "$batch") || return 2
-        command="${template//\{\{INPUT\}\}/$batch}"
-        command="${command//\{\{OUTPUT\}\}/$directory/current.output}"
+        printf -v input_q '%q' "$batch"
+        printf -v output_q '%q' "$directory/current.output"
+        command="${template//\{\{INPUT\}\}/$input_q}"
+        command="${command//\{\{OUTPUT\}\}/$output_q}"
         : > "$directory/current.output" || return 2
         pending=1
         if eval "$command $args"; then

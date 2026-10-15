@@ -42,6 +42,9 @@ with open(os.environ['KATANA_LOG'], 'a') as f:
     f.write(str(len(args[args.index('-cs')+1].encode())) + ':' + str(len(lines)) + '\\n')
 with out.open('w') as f:
     f.write('\\n'.join(lines) + '\\n')
+if os.environ.get('KATANA_TRUNCATE') and len(pathlib.Path(os.environ['KATANA_LOG']).read_text().splitlines()) == 2:
+    with out.open('a') as f:
+        f.write('https://h00000.example.test/trunc')
 if os.environ.get('KATANA_SLOW') and len(pathlib.Path(os.environ['KATANA_LOG']).read_text().splitlines()) == 2:
     import time
     time.sleep(5)
@@ -93,6 +96,19 @@ katana_run_batches 'katana -list {{{{INPUT}}}} -o {{{{OUTPUT}}}}' {shlex.quote(s
         self.assertEqual(sorted((self.p / "output").read_text().splitlines()), sorted(expected))
         self.assertGreater(len((self.p / "calls").read_text().splitlines()), 1)
 
+    def test_shared_dispatch_quotes_batch_paths_with_spaces(self):
+        expected = self.seeds(3000)
+        spaced = self.p / "scratch with spaces"
+        spaced.mkdir()
+        env = dict(self.env, TMPDIR=str(spaced))
+        script = f'''SCRIPT_DIR={shlex.quote(str(ROOT))}; source "$SCRIPT_DIR/src/scope.sh"
+katana_run_batches 'katana -list {{{{INPUT}}}} -o {{{{OUTPUT}}}}' {shlex.quote(str(self.p / 'input'))} {shlex.quote(str(self.p / 'output'))}
+'''
+        run = subprocess.run(["bash", "-c", script], env=env,
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(sorted((self.p / "output").read_text().splitlines()), sorted(expected))
+
     def test_shared_dispatch_failure_and_partial(self):
         self.seeds(3000)
         self.env["KATANA_FAIL"] = "1"
@@ -119,6 +135,19 @@ katana_run_batches 'katana -list {{{{INPUT}}}} -o {{{{OUTPUT}}}}' {shlex.quote(s
         self.assertGreater(len(got), 0)
         self.assertLess(len(got), 3000)
         self.assertEqual(len((self.p / "calls").read_text().splitlines()), 2)
+
+    def test_aggregate_timeout_drops_unterminated_active_line(self):
+        self.seeds(3000)
+        self.env.update(KATANA_SLOW="1", KATANA_TRUNCATE="1")
+        script = f'''SCRIPT_DIR={shlex.quote(str(ROOT))}; source "$SCRIPT_DIR/src/scope.sh"
+katana_run_batches 'katana -list {{{{INPUT}}}} -o {{{{OUTPUT}}}}' {shlex.quote(str(self.p / 'input'))} {shlex.quote(str(self.p / 'output'))}
+'''
+        run = subprocess.run(["timeout", "1", "bash", "-c", script], env=self.env,
+                             capture_output=True, text=True, timeout=10)
+        self.assertEqual(run.returncode, 124, run.stderr)
+        got = (self.p / "output").read_text().splitlines()
+        self.assertGreater(len(got), 0)
+        self.assertNotIn("https://h00000.example.test/trunc", got)
 
     def test_param_recon_scoped_failure_is_nonzero(self):
         self.seeds(3000)
