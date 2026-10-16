@@ -455,12 +455,30 @@ if [[ $USE_KATANA -eq 1 ]] && command -v katana &>/dev/null; then
     # Canonical crawl-scope builder shared with url_discovery (src/scope.sh).
     # It emits `-fs fqdn` unconditionally (an input hostname is never relaxed to
     # its registrable domain) plus `-cs <regex> -dr` when a scope is configured.
-    KATANA_SCOPE_ARGS=$(katana_crawl_args katana "$INPUT") || exit 2
-    eval "katana -silent -jc -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
-        < "$INPUT" 2>/dev/null > "$KATANA_TMP"
+    # The shared dispatcher partitions by encoded -cs size and keeps each
+    # batch's authorized seeds paired with its regex. Unscoped mode retains
+    # the original stdin invocation and unconditional fqdn restriction.
+    if scope_enabled; then
+        KATANA_TEMPLATE="katana -silent -jc -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS -list {{INPUT}} -o {{OUTPUT}}"
+        if ! katana_run_batches "$KATANA_TEMPLATE" "$INPUT" "$KATANA_TMP" 2>/dev/null; then
+            echo "katana batch failed; parameter coverage incomplete" >&2
+            interrupt_merge
+            exit 1
+        fi
+    else
+        KATANA_SCOPE_ARGS=$(katana_crawl_args katana "$INPUT") || exit 2
+        if ! eval "katana -silent -jc -d \"\$KATANA_DEPTH\" -rl \"\$RATE\" -ef \"\$EXT_FILTER\" $AUTH_ARGS $KATANA_SCOPE_ARGS" \
+            < "$INPUT" 2>/dev/null > "$KATANA_TMP"; then
+            echo "katana failed; parameter coverage incomplete" >&2
+            interrupt_merge
+            exit 1
+        fi
+    fi
     result "$(wc -l < "$KATANA_TMP" | tr -d ' ')" "katana"
 elif [[ $USE_KATANA -eq 1 ]]; then
-    echo -e "          ${YELLOW}warning:${NC} katana not found"; echo ""
+    echo "katana not found; parameter coverage incomplete" >&2
+    interrupt_merge
+    exit 1
 else
     skip
 fi

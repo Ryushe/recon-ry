@@ -23,11 +23,49 @@ katana_crawl_args() {
     if scope_enabled; then
         local crawl_scope
         crawl_scope=$(scope_check crawl-regex --input "$input_file") || return 2
-        printf -v crawl_scope "%q" "$crawl_scope"
+        # Host-derived regex cannot contain a quote; shell single quoting is
+        # the same encoding counted by crawl-batches (and shorter than %q).
+        crawl_scope="'$crawl_scope'"
         args="$args -cs $crawl_scope -dr"
     fi
     printf '%s' "$args"
 }
+
+# One invocation per regex-sized group, not per host; the caller's timeout
+# wraps the whole dispatch. The template contains {{INPUT}} and {{OUTPUT}}.
+katana_run_batches() (
+    local template="$1" source="$2" output="$3" directory batch args command rc=0 pending=0 input_q output_q
+    directory=$(mktemp -d) || return 2
+    # On an aggregate timeout, preserve complete lines from the active batch
+    # as well as prior batches before cleaning up its temporary output.
+    trap 'if (( pending )); then while IFS= read -r line; do printf "%s\n" "$line"; done < "$directory/current.output" >> "$output"; fi; rm -rf "$directory"' EXIT
+    scope_check crawl-batches --input "$source" --output "$directory" || return 2
+    if [[ "$template" != *'{{INPUT}}'* || "$template" != *'{{OUTPUT}}'* ]]; then
+        printf 'katana batch command requires input and output placeholders\n' >&2
+        return 2
+    fi
+    : > "$output" || return 2
+    for batch in "$directory"/batch-*.input; do
+        args=$(katana_crawl_args katana "$batch") || return 2
+        printf -v input_q '%q' "$batch"
+        printf -v output_q '%q' "$directory/current.output"
+        command="${template//\{\{INPUT\}\}/$input_q}"
+        command="${command//\{\{OUTPUT\}\}/$output_q}"
+        : > "$directory/current.output" || return 2
+        pending=1
+        if eval "$command $args"; then
+            :
+        else
+            rc=$?
+        fi
+        cat "$directory/current.output" >> "$output" || return 2
+        pending=0
+        if (( rc != 0 )); then
+            printf 'katana batch failed: %s (exit %s); remaining batches not crawled\n' "${batch##*/}" "$rc" >&2
+            return "$rc"
+        fi
+    done
+)
 
 scope_filter_artifacts() {
     scope_enabled || return 0
