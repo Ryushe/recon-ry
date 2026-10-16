@@ -1,6 +1,6 @@
 # Katana bounded-batches integration dossier
 
-- **Status:** reviewer findings patched; independent re-review pending
+- **Status:** independent re-review approved; ready for parent-controlled main integration
 - **Owner:** Hermes bugfix subagent
 - **Branch / owning ref:** `fix/katana-bounded-batches`
 - **Worktree:** `/home/ryushe/worktrees/recon-ry-katana-batches`
@@ -22,24 +22,24 @@ Split authorized Katana seed lines into host groups whose shell-encoded crawl re
 - Review follow-up: 10 Katana tests and 46 full script tests passed; Bash syntax and `git diff --check` passed. A TMPDIR containing spaces now resolves both batch paths, and a timeout drops the active batch's unterminated trailing URL while retaining complete lines.
 - `bash -n src/scope.sh src/tools.sh scripts/param_recon.sh` and `git diff --check`: passed.
 - Synthetic 20,000-host fixture validates complete authorized coverage, multi-host batches, regex byte cap, exclusions, suffix attacks, and exact-host denial. Stub Katana validates success, failure, partial output, and aggregate timeout across dispatcher and consumers. No target requests.
-- Independent review blocked the first tip: batch paths were not shell-quoted and a timeout retained a truncated active URL. Both concrete defects are patched with synthetic regressions; independent re-review remains before integration. Scoped param-recon still prints a generic failure rather than detailed dispatcher stderr; diagnostic improvement is nonblocking and must not expose raw capture content.
+- Independent review blocked the first tip: batch paths were not shell-quoted and a timeout retained a truncated active URL. Both concrete defects are patched with synthetic regressions. Independent follow-up review approved tip `9eca7f8`: 10 focused and 46 offline script tests, Bash syntax, and diff checks passed; scope byte cap, exclusions, suffix attacks, partial output, timeout truncation, and paths with spaces were checked. Scoped param-recon still prints a generic failure rather than detailed dispatcher stderr; diagnostic improvement is nonblocking and must not expose raw capture content.
 - Merge/ancestry: base `origin/main` at a16578c; no merge or push by this worker.
 
 ## Blockers and deferred work
 
-- Parent must obtain independent re-review of the follow-up, re-fetch the selected integration tip, test/reconcile intervening changes, and decide integration. No live target exercise authorized; that remains outside this handoff.
+- Parent must re-fetch the selected integration tip, test/reconcile intervening changes, and decide integration. No live target exercise authorized; that remains outside this handoff.
 
 ## Interruption / resume handoff
 
 - **Owning feature branch/ref:** `fix/katana-bounded-batches`
 - **Latest immutable recovery checkpoint:** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`; subsequent dossier-only handoff commit at branch tip.
 - **Feature implementation commit(s):** `4cbee7ed892b45412a57de76642d9a6bc3d607eb`
-- **Exact resume point:** Independently re-review the path quoting and timeout partial-line fix and entire branch diff, then select the repository's reviewed integration path; do not push main or close the papercut from offline tests.
+- **Exact resume point:** Independent re-review approved the corrected tip; re-fetch, integrate through the clean selected main checkout, rerun offline tests, and verify remote read-back. Live target behavior remains unverified.
 - **Working-tree state at handoff:** expected clean after commit.
 
 ## Decision gates
 
-- **Integration gate:** independent re-review of the corrected branch diff and focused offline tests; repository main promotion remains a separate decision.
+- **Integration gate:** independent re-review approved corrected tip `9eca7f8`; parent-controlled merge and merged-tree tests remain.
 - **Activation / cohort gate:** none attempted.
 - **Promotion gate:** no main merge/push by this worker.
 
@@ -47,3 +47,4 @@ Split authorized Katana seed lines into host groups whose shell-encoded crawl re
 
 - 2026-10-15 — Prepared bounded dispatch and offline regression suite; awaiting parent review.
 - 2026-10-15 — initial review rejected unquoted batch paths and truncated timeout output; corrected both and passed 10 focused / 46 full offline tests. Re-review pending.
+- 2026-10-15 — follow-up reviewer approved `9eca7f8` for main integration after 10 focused / 46 full offline tests, Bash syntax and diff checks; no live target traffic.
