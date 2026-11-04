@@ -259,6 +259,47 @@ record_tool_outcome() {
     fi
 }
 
+# Substitute {{RATE_LIMIT}} with a value the tool's flags actually accept.
+#
+# rate_limit.conf values may be fractional (for example a project default of
+# 0.5 req/s), but the ProjectDiscovery tools register -rl as an int flag:
+# `httpx -rl 0.5` dies with `invalid value "0.5" for flag -rl: parse error`
+# (exit 2) before any request is sent. Observed 2026-11-04 on linktree-mbb-og:
+# one fractional default simultaneously killed alive_check (httpx),
+# url_discovery (katana) and secret_scan (nuclei).
+#
+# Rules, verified against the installed tool help output:
+#   - integer rates pass through untouched;
+#   - httpx supports -rlm (requests per minute), so a fractional req/s is
+#     translated to the exact per-minute equivalent (0.5 req/s -> -rlm 30);
+#   - every other -rl consumer is clamped up to the nearest legal integer
+#     (1 req/s) with a warning: nuclei's -rlm is deprecated, katana v1.8.0
+#     ignores -rlm, and subfinder/ffuf have no per-minute flag. Wrapper
+#     scripts and python helpers also receive the clamped integer.
+apply_rate_limit_substitution() {
+    local tool="$1" rate="$2" command="$3"
+    local effective="$rate"
+
+    if [[ -n "$rate" && "$rate" != "0" && ! "$rate" =~ ^[0-9]+$ ]]; then
+        effective="1"
+    fi
+
+    command="${command//\{\{RATE_LIMIT\}\}/$effective}"
+
+    if [[ "$effective" != "$rate" && -n "$rate" && "$rate" != "0" ]]; then
+        if [[ "$tool" == "httpx" ]]; then
+            local per_min
+            per_min=$(awk -v r="$rate" 'BEGIN { m = int(r * 60 + 0.5); if (m < 1) m = 1; print m }')
+            command="${command//-rl 1 /-rlm $per_min }"
+            log_warning "Rate limit for httpx: fractional $rate req/s translated to -rlm $per_min/min (httpx -rl is int-only)"
+        else
+            log_warning "Rate limit for $tool: fractional $rate req/s clamped to 1 req/s (tool rate flag is int-only)"
+        fi
+    fi
+
+    printf '%s' "$command"
+}
+
 # Execute a tool
 execute_tool() {
     local tool="$1"
@@ -404,7 +445,7 @@ execute_tool() {
     else
         command="${command//\{\{VENV_PYTHON\}\}/python3}"
     fi
-    command="${command//\{\{RATE_LIMIT\}\}/$rate_limit}"
+    command="$(apply_rate_limit_substitution "$tool" "$rate_limit" "$command")"
 
     # Apply payload override if configured
     local payload_command
@@ -435,7 +476,7 @@ execute_tool() {
         else
             command="${command//\{\{VENV_PYTHON\}\}/python3}"
         fi
-        command="${command//\{\{RATE_LIMIT\}\}/$rate_limit}"
+        command="$(apply_rate_limit_substitution "$tool" "$rate_limit" "$command")"
     fi
 
     if [[ "$venv_activate" == "true" && -n "$venv_path" ]]; then
@@ -706,7 +747,7 @@ PY
             INTERRUPTED=true
             log_warning "Tool $tool interrupted; merging partial output"
         else
-            log_warning "Tool $tool failed; attempting to merge partial output"
+            log_warning "Tool $tool failed (exit $exec_status); attempting to merge partial output"
         fi
     fi
 

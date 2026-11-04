@@ -192,7 +192,7 @@ stages:
   url_ranking:
     enabled: true
     parallel: false
-    depends_on: [http_fingerprinting]
+    depends_on: [alive_check]
     description: "Rank live URLs for focused manual and agent review"
     tools:
       - url_ranking
