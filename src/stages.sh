@@ -6,6 +6,7 @@
 : "${INTERRUPTED:=false}"
 : "${EYE_DATE_STAMP:=}"
 : "${CURRENT_HISTORY_DIR:=}"
+declare -a SKIPPED_STAGES=()
 
 dir_has_contents() {
     local dir_path="$1"
@@ -249,6 +250,7 @@ execute_stage() {
     # Check if stage is enabled
     if ! is_stage_enabled "$stage"; then
         log_warning "Stage $stage is disabled, skipping"
+        SKIPPED_STAGES+=("$stage(disabled)")
         return 0
     fi
 
@@ -298,10 +300,10 @@ execute_stage() {
             log_info "Passive seed domain: $domain"
         fi
     fi
-
     # Check dependencies
     if ! check_stage_dependencies "$stage" "$project_dir"; then
         log_warning "Stage $stage dependencies not met, skipping"
+        SKIPPED_STAGES+=("$stage(deps)")
         return 0
     fi
 
@@ -632,6 +634,7 @@ run_recon_project() {
     local failed_stages=0
     local project_status=0
     local bg_pid=""
+    SKIPPED_STAGES=()
     for stage in $stages; do
         if [[ "${INTERRUPTED:-false}" == "true" ]]; then
             log_warning "Interrupt requested; stopping remaining stages"
@@ -657,6 +660,13 @@ run_recon_project() {
             [[ $project_status -eq 0 ]] && project_status=1
             [[ $stage_status -eq 124 ]] && project_status=124
             log_error "Stage $stage failed"
+        fi
+
+        # url_discovery harvests into .tmp_run/urls.txt; promote the corpus to
+        # the project urls.txt now so a later skipped url_ranking (or a wiped
+        # .tmp_run on the next run) can never strand the collected URLs.
+        if [[ "$stage" == "url_discovery" ]]; then
+            promote_temp_urls_to_project "$project_dir" "$temp_dir"
         fi
 
         if [[ "$profile" == "exact-urls" || "$profile" == "exact-urls-header" ]]; then
@@ -701,16 +711,22 @@ run_recon_project() {
 
     # Final summary
     echo ""
-    log_info "Recon completed!"
+    local skipped_count=${#SKIPPED_STAGES[@]}
+    if [[ $failed_stages -gt 0 || $skipped_count -gt 0 ]]; then
+        log_warning "Recon completed with issues: $failed_stages stage(s) failed, $skipped_count skipped (${SKIPPED_STAGES[*]:-})"
+    else
+        log_info "Recon completed!"
+    fi
     log_info "Project directory: $project_dir"
     log_info "History saved to: $history_dir"
 
     if [[ $failed_stages -gt 0 ]]; then
         log_warning "$failed_stages stages had failures"
+    elif [[ $skipped_count -gt 0 ]]; then
+        log_warning "No stage failures, but $skipped_count stage(s) were skipped (${SKIPPED_STAGES[*]:-})"
     else
         log_success "All stages completed successfully"
     fi
-
     # Show summary of results
     show_results_summary "$project_dir"
     return "$project_status"

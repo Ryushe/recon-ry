@@ -196,6 +196,41 @@ merge_with_anew() {
     fi
 }
 
+# Promote the url_discovery corpus from .tmp_run/urls.txt into the project
+# urls.txt.
+#
+# execute_stage routes urls.txt outputs of url_discovery tools into
+# .tmp_run/urls.txt, and run_recon_project wipes .tmp_run at the start of the
+# next run. Without this promotion the whole wayback/gau/katana corpus is
+# silently destroyed when url_ranking skips (observed 2026-11-04 on
+# linktree-mbb-og: 1,399,847 harvested URLs stranded in .tmp_run while the
+# final project urls.txt still held only the 13 seed lines and the run
+# reported "Recon completed!"). Content is already scope-filtered by
+# merge_temp_output on the way into .tmp_run.
+promote_temp_urls_to_project() {
+    local project_dir="$1"
+    local temp_dir="$2"
+
+    if [[ ! -s "$temp_dir/urls.txt" ]]; then
+        return 0
+    fi
+
+    local promoted=0
+    if [[ -f "$project_dir/urls.txt" ]]; then
+        promoted=$(count_new_entries "$project_dir/urls.txt" "$temp_dir/urls.txt")
+    else
+        promoted=$(awk 'NF { if (!seen[$0]++) c++ } END { print c+0 }' "$temp_dir/urls.txt")
+    fi
+
+    merge_with_anew "$temp_dir/urls.txt" "$project_dir/urls.txt"
+
+    if [[ $promoted -gt 0 ]]; then
+        log_success "Promoted $promoted corpus URLs from .tmp_run/urls.txt to project urls.txt"
+    else
+        log_info "url_discovery corpus added 0 new entries to project urls.txt"
+    fi
+}
+
 # Create global URLs file (merge wild.txt and urls.txt)
 create_global_urls() {
     local project_dir="$1"
